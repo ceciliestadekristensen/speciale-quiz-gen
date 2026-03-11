@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QuizGen</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; max-width: 900px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 12px 0; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+    button.primary { background: #2563eb; border-color: #2563eb; color: white; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .muted { color: #666; font-size: 14px; }
+    .status { padding: 10px; border-radius: 10px; background: #f5f5f5; }
+    .qtitle { font-size: 18px; font-weight: 650; margin: 0 0 6px; }
+    .opt { margin: 6px 0; }
+    .ok { color: #0a7a2f; font-weight: 600; }
+    .bad { color: #b42318; font-weight: 600; }
+    .small { font-size: 13px; }
+    input[type="number"] { width: 90px; padding: 8px; border-radius: 10px; border: 1px solid #ccc; }
+    select { padding: 8px; border-radius: 10px; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <h1>QuizGen</h1>
+  <p class="muted">Upload en PDF → generér quiz ud fra hele PDF’en via din lokale FastAPI + Ollama backend.</p>
+
+  <div class="card">
+    <div class="row">
+      <input id="file" type="file" accept="application/pdf" />
+      <button id="uploadBtn" class="primary">Upload</button>
+      <span id="uploadInfo" class="muted"></span>
+    </div>
+
+    <hr style="border:none;border-top:1px solid #eee;margin:14px 0;" />
+
+    <div class="row">
+      <label>Model:
+        <select id="model">
+          <option value="llama3.2:latest" selected>llama3.2:latest (hurtigere)</option>
+          <option value="llama3.1:latest">llama3.1:latest (langsommere)</option>
+        </select>
+      </label>
+
+      <label>Antal spørgsmål:
+        <input id="numq" type="number" value="10" min="3" max="30" />
+      </label>
+
+      <button id="genBtn" class="primary" disabled>Generér quiz</button>
+    </div>
+
+    <div style="margin-top:12px" class="status" id="status">Status: klar</div>
+  </div>
+
+  <div id="quiz"></div>
+
+  <script>
+    // API er samme host som siden (vi serverer frontend fra backend på /app)
+    const API = "";
+    let uploadId = null;
+    let quizObj = null;
+
+    const el = (id) => document.getElementById(id);
+    function setStatus(msg) { el("status").textContent = "Status: " + msg; }
+
+    el("uploadBtn").addEventListener("click", async () => {
+      const f = el("file").files[0];
+      if (!f) return alert("Vælg en PDF først.");
+
+      setStatus("Uploader PDF...");
+      el("uploadBtn").disabled = true;
+
+      try {
+        const fd = new FormData();
+        fd.append("file", f);
+
+        const res = await fetch(API + "/upload", { method: "POST", body: fd });
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error("Upload fejlede: " + res.status + " - " + txt);
+        }
+
+        const data = await res.json();
+        uploadId = data.upload_id;
+
+        el("uploadInfo").textContent = `Uploadet: ${data.filename} (${Math.round(data.bytes/1024)} KB)`;
+        el("genBtn").disabled = false;
+        setStatus("Upload ok. Klar til at generere.");
+      } catch (e) {
+        console.error(e);
+        alert(e.message);
+        setStatus("Fejl ved upload.");
+      } finally {
+        el("uploadBtn").disabled = false;
+      }
+    });
+
+    el("genBtn").addEventListener("click", async () => {
+      if (!uploadId) return alert("Upload en PDF først.");
+
+      const payload = {
+        upload_id: uploadId,
+        model: el("model").value,
+        num_questions: Number(el("numq").value)
+      };
+
+      setStatus("Genererer quiz (kan tage lidt tid)...");
+      el("genBtn").disabled = true;
+      el("quiz").innerHTML = "";
+
+      try {
+        const res = await fetch(API + "/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error("Generate fejlede: " + res.status + " - " + txt);
+        }
+
+        const data = await res.json();
+        quizObj = data.quiz;
+
+        setStatus(`Færdig! (latency: ${data.debug.latency_s.toFixed(1)}s, repair: ${data.debug.did_repair})`);
+        renderQuiz(quizObj);
+      } catch (e) {
+        console.error(e);
+        alert(e.message);
+        setStatus("Fejl ved generate.");
+      } finally {
+        el("genBtn").disabled = false;
+      }
+    });
+
+    function renderQuiz(quiz) {
+      const root = el("quiz");
+
+      const title = document.createElement("div");
+      title.className = "card";
+      title.innerHTML = `
+        <h2 style="margin:0">${quiz.quiz_title || "Quiz"}</h2>
+        <div class="muted small">Svar og tryk “Ret” for score.</div>
+      `;
+      root.appendChild(title);
+
+      quiz.questions.forEach(q => {
+        const c = document.createElement("div");
+        c.className = "card";
+        c.dataset.qid = q.id;
+
+        const opts = q.options.map((opt, idx) => {
+          const name = `q_${q.id}`;
+          return `
+            <div class="opt">
+              <label>
+                <input type="radio" name="${name}" value="${idx}" />
+                ${opt}
+              </label>
+            </div>`;
+        }).join("");
+
+        c.innerHTML = `
+          <div class="muted small">${q.context || "Kontekst"}</div>
+          <p class="qtitle">${q.id}. ${q.question}</p>
+          ${opts}
+          <div class="muted small" style="margin-top:10px" id="fb_${q.id}"></div>
+        `;
+        root.appendChild(c);
+      });
+
+      const actions = document.createElement("div");
+      actions.className = "card";
+      actions.innerHTML = `
+        <button class="primary" id="gradeBtn">Ret</button>
+        <span class="muted" id="scoreTxt"></span>
+      `;
+      root.appendChild(actions);
+
+      el("gradeBtn").addEventListener("click", () => grade(quiz));
+    }
+
+    function grade(quiz) {
+      let score = 0;
+
+      quiz.questions.forEach(q => {
+        const chosen = document.querySelector(`input[name="q_${q.id}"]:checked`);
+        const fb = document.getElementById(`fb_${q.id}`);
+
+        if (!chosen) {
+          fb.innerHTML = `<span class="bad">Ikke besvaret.</span>`;
+          return;
+        }
+
+        const idx = Number(chosen.value);
+        if (idx === q.answer_index) {
+          score++;
+          fb.innerHTML = `<span class="ok">Korrekt ✅</span>`;
+        } else {
+          const correct = q.options[q.answer_index];
+          fb.innerHTML = `
+            <div>
+              <span class="bad">Forkert ❌</span>
+              Korrekt: <b>${correct}</b><br/>
+              <span class="muted small">Forklaring: ${q.explanation || "—"}</span>
+            </div>
+          `;
+        }
+      });
+
+      document.getElementById("scoreTxt").textContent = `Score: ${score}/${quiz.questions.length}`;
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+    }
+  </script>
+</body>
+</html>
