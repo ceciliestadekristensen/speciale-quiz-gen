@@ -5,26 +5,158 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>QuizGen</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; max-width: 900px; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 12px 0; }
-    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
-    button.primary { background: #2563eb; border-color: #2563eb; color: white; }
-    button:disabled { opacity: 0.6; cursor: not-allowed; }
-    .muted { color: #666; font-size: 14px; }
-    .status { padding: 10px; border-radius: 10px; background: #f5f5f5; }
-    .qtitle { font-size: 18px; font-weight: 650; margin: 0 0 6px; }
-    .opt { margin: 6px 0; }
-    .ok { color: #0a7a2f; font-weight: 600; }
-    .bad { color: #b42318; font-weight: 600; }
-    .small { font-size: 13px; }
-    input[type="number"] { width: 90px; padding: 8px; border-radius: 10px; border: 1px solid #ccc; }
-    select { padding: 8px; border-radius: 10px; border: 1px solid #ccc; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      margin: 24px;
+      max-width: 980px;
+    }
+
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 16px;
+      margin: 12px 0;
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    button {
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: white;
+    }
+
+    button.secondary {
+      background: #f8f8f8;
+    }
+
+    button.warn {
+      background: #fff7ed;
+      border-color: #fdba74;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .muted {
+      color: #666;
+      font-size: 14px;
+    }
+
+    .status {
+      padding: 10px;
+      border-radius: 10px;
+      background: #f5f5f5;
+    }
+
+    .qtitle {
+      font-size: 24px;
+      font-weight: 650;
+      margin: 0 0 14px;
+      line-height: 1.4;
+    }
+
+    .opt {
+      margin: 10px 0;
+    }
+
+    .ok {
+      color: #0a7a2f;
+      font-weight: 600;
+    }
+
+    .bad {
+      color: #b42318;
+      font-weight: 600;
+    }
+
+    input[type="number"] {
+      width: 110px;
+      padding: 8px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+    }
+
+    input[type="text"] {
+      padding: 8px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      width: 100%;
+      max-width: 420px;
+    }
+
+    select {
+      padding: 8px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+    }
+
+    .nav-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+
+    .progress {
+      font-size: 14px;
+      color: #666;
+    }
+
+    .answer-box {
+      margin-top: 14px;
+      min-height: 24px;
+    }
+
+    .score-box {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .feedback {
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 10px;
+      background: #f7f7f7;
+    }
+
+    .candidate-card.selected {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.08);
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #f3f4f6;
+      font-size: 12px;
+      color: #444;
+    }
   </style>
 </head>
 <body>
   <h1>QuizGen</h1>
-  <p class="muted">Upload en PDF → generér quiz ud fra hele PDF’en via din lokale FastAPI + Ollama backend.</p>
+  <p class="muted">
+    Upload en PDF, generér forslag, vælg de bedste spørgsmål, og start derefter quizzen.
+  </p>
 
   <div class="card">
     <div class="row">
@@ -36,60 +168,110 @@
     <hr style="border:none;border-top:1px solid #eee;margin:14px 0;" />
 
     <div class="row">
-      <label>Model:
-        <select id="model">
-          <option value="llama3.2:latest" selected>llama3.2:latest (hurtigere)</option>
-          <option value="llama3.1:latest">llama3.1:latest (langsommere)</option>
+      <label>Hold:
+        <select id="ageGroup">
+          <option value="A">A (6–8 år)</option>
+          <option value="B" selected>B (9–12 år)</option>
+          <option value="C">C (13–15 år)</option>
+          <option value="UNG">Ungdom (16–18 år)</option>
         </select>
       </label>
 
-      <label>Antal spørgsmål:
-        <input id="numq" type="number" value="10" min="3" max="30" />
+      <label>Antal spørgsmål i endelig quiz:
+        <input id="numq" type="number" value="8" min="3" max="30" />
       </label>
 
-      <button id="genBtn" class="primary" disabled>Generér quiz</button>
+      <label>Fra side:
+        <input id="pageFrom" type="number" min="1" placeholder="1" />
+      </label>
+
+      <label>Til side:
+        <input id="pageTo" type="number" min="1" placeholder="20" />
+      </label>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <button id="genBtn" class="primary" disabled>Generér forslag</button>
     </div>
 
     <div style="margin-top:12px" class="status" id="status">Status: klar</div>
   </div>
 
+  <div id="review"></div>
   <div id="quiz"></div>
 
   <script>
-    // API er samme host som siden (vi serverer frontend fra backend på /app)
     const API = "";
     let uploadId = null;
-    let quizObj = null;
+    let requestedQuestionCount = 8;
+
+    let generationContext = {
+      age_group: "B",
+      page_from: null,
+      page_to: null
+    };
+
+    let candidateQuiz = null;
+    let selectedQuestionIds = new Set();
+
+    let currentQuiz = null;
+    let currentIndex = 0;
+    let answers = {};
+    let checkedQuestions = {};
 
     const el = (id) => document.getElementById(id);
-    function setStatus(msg) { el("status").textContent = "Status: " + msg; }
+
+    function setStatus(msg) {
+      el("status").textContent = "Status: " + msg;
+    }
+
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function clearViews() {
+      el("review").innerHTML = "";
+      el("quiz").innerHTML = "";
+    }
 
     el("uploadBtn").addEventListener("click", async () => {
-      const f = el("file").files[0];
-      if (!f) return alert("Vælg en PDF først.");
+      const file = el("file").files[0];
+      if (!file) {
+        alert("Vælg en PDF først.");
+        return;
+      }
 
       setStatus("Uploader PDF...");
       el("uploadBtn").disabled = true;
 
       try {
-        const fd = new FormData();
-        fd.append("file", f);
+        const formData = new FormData();
+        formData.append("file", file);
 
-        const res = await fetch(API + "/upload", { method: "POST", body: fd });
-        if (!res.ok) {
-          const txt = await res.text();
-          throw new Error("Upload fejlede: " + res.status + " - " + txt);
-        }
+        const res = await fetch(API + "/upload", {
+          method: "POST",
+          body: formData
+        });
 
         const data = await res.json();
-        uploadId = data.upload_id;
+        if (!res.ok) {
+          throw new Error(data.detail || "Upload fejlede");
+        }
 
-        el("uploadInfo").textContent = `Uploadet: ${data.filename} (${Math.round(data.bytes/1024)} KB)`;
+        uploadId = data.upload_id;
+        el("uploadInfo").textContent =
+          `Uploadet: ${data.filename} (${Math.round(data.bytes / 1024)} KB)`;
+
         el("genBtn").disabled = false;
-        setStatus("Upload ok. Klar til at generere.");
-      } catch (e) {
-        console.error(e);
-        alert(e.message);
+        setStatus("Upload ok. Klar til at generere forslag.");
+      } catch (err) {
+        console.error(err);
+        alert(err.message);
         setStatus("Fejl ved upload.");
       } finally {
         el("uploadBtn").disabled = false;
@@ -97,120 +279,428 @@
     });
 
     el("genBtn").addEventListener("click", async () => {
-      if (!uploadId) return alert("Upload en PDF først.");
+      if (!uploadId) {
+        alert("Upload en PDF først.");
+        return;
+      }
+
+      const pageFromVal = el("pageFrom").value ? Number(el("pageFrom").value) : null;
+      const pageToVal = el("pageTo").value ? Number(el("pageTo").value) : null;
+      requestedQuestionCount = Number(el("numq").value);
+
+      generationContext = {
+        age_group: el("ageGroup").value,
+        page_from: pageFromVal,
+        page_to: pageToVal
+      };
 
       const payload = {
         upload_id: uploadId,
-        model: el("model").value,
-        num_questions: Number(el("numq").value)
+        num_questions: requestedQuestionCount,
+        age_group: generationContext.age_group,
+        page_from: generationContext.page_from,
+        page_to: generationContext.page_to
       };
 
-      setStatus("Genererer quiz (kan tage lidt tid)...");
+      setStatus("Genererer forslag...");
       el("genBtn").disabled = true;
-      el("quiz").innerHTML = "";
+      clearViews();
 
       try {
-        const res = await fetch(API + "/generate", {
+        const res = await fetch(API + "/generate_candidates", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(payload)
         });
-        if (!res.ok) {
-          const txt = await res.text();
-          throw new Error("Generate fejlede: " + res.status + " - " + txt);
-        }
 
         const data = await res.json();
-        quizObj = data.quiz;
+        if (!res.ok) {
+          throw new Error(data.detail || "Generering fejlede");
+        }
 
-        setStatus(`Færdig! (latency: ${data.debug.latency_s.toFixed(1)}s, repair: ${data.debug.did_repair})`);
-        renderQuiz(quizObj);
-      } catch (e) {
-        console.error(e);
-        alert(e.message);
-        setStatus("Fejl ved generate.");
+        candidateQuiz = data.quiz;
+        selectedQuestionIds = new Set();
+
+        setStatus("Forslag genereret. Vælg de bedste spørgsmål.");
+        renderReview(candidateQuiz);
+      } catch (err) {
+        console.error(err);
+        alert(err.message);
+        setStatus("Fejl ved generering.");
       } finally {
         el("genBtn").disabled = false;
       }
     });
 
-    function renderQuiz(quiz) {
-      const root = el("quiz");
+    function renderReview(quiz) {
+      const root = el("review");
+      root.innerHTML = "";
 
-      const title = document.createElement("div");
-      title.className = "card";
-      title.innerHTML = `
-        <h2 style="margin:0">${quiz.quiz_title || "Quiz"}</h2>
-        <div class="muted small">Svar og tryk “Ret” for score.</div>
+      if (!quiz || !quiz.questions || quiz.questions.length === 0) {
+        root.innerHTML = `<div class="card">Ingen forslag fundet.</div>`;
+        return;
+      }
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "card";
+      wrapper.innerHTML = `
+        <h2 style="margin-top:0">Vælg spørgsmål</h2>
+        <p class="muted">
+          Systemet har lavet flere forslag end nødvendigt. Vælg de bedste ${requestedQuestionCount} spørgsmål.
+        </p>
+        <div class="row" style="margin-top:12px;">
+          <label>Quiztitel:
+            <input id="quizTitleInput" type="text" value="Valgt quiz" />
+          </label>
+        </div>
+        <div style="margin-top:12px;">
+          <span class="pill" id="selectedCountPill">Valgt: 0 / ${requestedQuestionCount}</span>
+        </div>
+        <div id="candidateList" style="margin-top:16px;"></div>
+        <div class="row" style="margin-top:18px;">
+          <button id="finalizeBtn" class="primary" disabled>Start quiz med valgte spørgsmål</button>
+        </div>
       `;
-      root.appendChild(title);
+      root.appendChild(wrapper);
 
-      quiz.questions.forEach(q => {
-        const c = document.createElement("div");
-        c.className = "card";
-        c.dataset.qid = q.id;
+      const list = document.getElementById("candidateList");
 
-        const opts = q.options.map((opt, idx) => {
-          const name = `q_${q.id}`;
-          return `
-            <div class="opt">
-              <label>
-                <input type="radio" name="${name}" value="${idx}" />
-                ${opt}
-              </label>
-            </div>`;
-        }).join("");
+      quiz.questions.forEach((q) => {
+        const card = document.createElement("div");
+        card.className = "card candidate-card";
+        card.id = `candidate_${q.id}`;
 
-        c.innerHTML = `
-          <div class="muted small">${q.context || "Kontekst"}</div>
-          <p class="qtitle">${q.id}. ${q.question}</p>
-          ${opts}
-          <div class="muted small" style="margin-top:10px" id="fb_${q.id}"></div>
+        const correctText = (q.options || [])[q.answer_index] || "";
+
+        card.innerHTML = `
+          <div class="row" style="justify-content:space-between;align-items:flex-start;">
+            <div style="flex:1 1 600px;">
+              <p style="margin:0 0 10px;font-weight:650;">${escapeHtml(q.question)}</p>
+              <div class="opt">A) ${escapeHtml(q.options?.[0] || "")}</div>
+              <div class="opt">B) ${escapeHtml(q.options?.[1] || "")}</div>
+              <div class="opt">C) ${escapeHtml(q.options?.[2] || "")}</div>
+              <div style="margin-top:10px;"><b>Korrekt svar:</b> ${escapeHtml(correctText)}</div>
+              <div class="muted" style="margin-top:8px;">Forklaring: ${escapeHtml(q.explanation || "")}</div>
+            </div>
+            <div style="min-width:220px; display:flex; flex-direction:column; gap:8px;">
+              <button class="primary select-btn" data-id="${q.id}">Vælg</button>
+              <button class="warn regen-btn" data-id="${q.id}">Lav nyt forslag</button>
+            </div>
+          </div>
         `;
-        root.appendChild(c);
+        list.appendChild(card);
       });
 
-      const actions = document.createElement("div");
-      actions.className = "card";
-      actions.innerHTML = `
-        <button class="primary" id="gradeBtn">Ret</button>
-        <span class="muted" id="scoreTxt"></span>
-      `;
-      root.appendChild(actions);
+      document.querySelectorAll(".select-btn").forEach((btn) => {
+        btn.addEventListener("click", () => toggleSelectQuestion(Number(btn.dataset.id)));
+      });
 
-      el("gradeBtn").addEventListener("click", () => grade(quiz));
+      document.querySelectorAll(".regen-btn").forEach((btn) => {
+        btn.addEventListener("click", () => regenerateOneQuestion(Number(btn.dataset.id)));
+      });
+
+      document.getElementById("finalizeBtn").addEventListener("click", finalizeSelectedQuiz);
+      updateSelectionUI();
     }
 
-    function grade(quiz) {
-      let score = 0;
-
-      quiz.questions.forEach(q => {
-        const chosen = document.querySelector(`input[name="q_${q.id}"]:checked`);
-        const fb = document.getElementById(`fb_${q.id}`);
-
-        if (!chosen) {
-          fb.innerHTML = `<span class="bad">Ikke besvaret.</span>`;
+    function toggleSelectQuestion(questionId) {
+      if (selectedQuestionIds.has(questionId)) {
+        selectedQuestionIds.delete(questionId);
+      } else {
+        if (selectedQuestionIds.size >= requestedQuestionCount) {
+          alert(`Du kan vælge maks. ${requestedQuestionCount} spørgsmål.`);
           return;
         }
+        selectedQuestionIds.add(questionId);
+      }
+      updateSelectionUI();
+    }
 
-        const idx = Number(chosen.value);
-        if (idx === q.answer_index) {
-          score++;
-          fb.innerHTML = `<span class="ok">Korrekt ✅</span>`;
+    function updateSelectionUI() {
+      const pill = document.getElementById("selectedCountPill");
+      if (pill) {
+        pill.textContent = `Valgt: ${selectedQuestionIds.size} / ${requestedQuestionCount}`;
+      }
+
+      (candidateQuiz?.questions || []).forEach((q) => {
+        const card = document.getElementById(`candidate_${q.id}`);
+        const btn = card?.querySelector(".select-btn");
+
+        if (!card || !btn) return;
+
+        if (selectedQuestionIds.has(q.id)) {
+          card.classList.add("selected");
+          btn.textContent = "Fravælg";
         } else {
-          const correct = q.options[q.answer_index];
-          fb.innerHTML = `
-            <div>
-              <span class="bad">Forkert ❌</span>
-              Korrekt: <b>${correct}</b><br/>
-              <span class="muted small">Forklaring: ${q.explanation || "—"}</span>
-            </div>
-          `;
+          card.classList.remove("selected");
+          btn.textContent = "Vælg";
         }
       });
 
-      document.getElementById("scoreTxt").textContent = `Score: ${score}/${quiz.questions.length}`;
-      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      const finalizeBtn = document.getElementById("finalizeBtn");
+      if (finalizeBtn) {
+        finalizeBtn.disabled = selectedQuestionIds.size !== requestedQuestionCount;
+      }
+    }
+
+    async function regenerateOneQuestion(questionId) {
+      const oldQuestion = (candidateQuiz?.questions || []).find((q) => q.id === questionId);
+      if (!oldQuestion) {
+        alert("Kunne ikke finde spørgsmålet.");
+        return;
+      }
+
+      const existingQuestions = (candidateQuiz?.questions || []).filter((q) => q.id !== questionId);
+
+      setStatus("Laver nyt forslag til ét spørgsmål...");
+
+      try {
+        const res = await fetch(API + "/regenerate_question", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            upload_id: uploadId,
+            age_group: generationContext.age_group,
+            page_from: generationContext.page_from,
+            page_to: generationContext.page_to,
+            old_question: oldQuestion,
+            existing_questions: existingQuestions
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || "Kunne ikke lave nyt forslag");
+        }
+
+        candidateQuiz.questions = candidateQuiz.questions.map((q) =>
+          q.id === questionId ? { ...data.question, id: questionId } : q
+        );
+
+        if (selectedQuestionIds.has(questionId)) {
+          selectedQuestionIds.delete(questionId);
+        }
+
+        renderReview(candidateQuiz);
+        setStatus("Nyt forslag lavet.");
+      } catch (err) {
+        console.error(err);
+        alert(err.message);
+        setStatus("Fejl ved nyt forslag.");
+      }
+    }
+
+    async function finalizeSelectedQuiz() {
+      const selectedQuestions = (candidateQuiz?.questions || []).filter((q) => selectedQuestionIds.has(q.id));
+
+      if (selectedQuestions.length !== requestedQuestionCount) {
+        alert(`Vælg præcis ${requestedQuestionCount} spørgsmål.`);
+        return;
+      }
+
+      const quizTitle = document.getElementById("quizTitleInput")?.value?.trim() || "Valgt quiz";
+
+      setStatus("Bygger den endelige quiz...");
+      try {
+        const res = await fetch(API + "/finalize_quiz", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            quiz_title: quizTitle,
+            selected_questions: selectedQuestions
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || "Kunne ikke bygge quiz");
+        }
+
+        currentQuiz = data.quiz;
+        currentIndex = 0;
+        answers = {};
+        checkedQuestions = {};
+
+        el("review").innerHTML = "";
+        setStatus("Quiz klar!");
+        renderCurrentQuestion();
+      } catch (err) {
+        console.error(err);
+        alert(err.message);
+        setStatus("Fejl ved opbygning af quiz.");
+      }
+    }
+
+    function saveCurrentAnswer() {
+      if (!currentQuiz) return;
+      const q = currentQuiz.questions[currentIndex];
+      if (!q) return;
+
+      const chosen = document.querySelector(`input[name="q_${q.id}"]:checked`);
+      answers[q.id] = chosen ? Number(chosen.value) : null;
+    }
+
+    function isCorrect(q, given) {
+      return given === q.answer_index;
+    }
+
+    function getAnswerFeedbackHtml(q) {
+      const given = answers[q.id];
+
+      if (given === null || given === undefined) {
+        return `<span class="bad">Vælg et svar først.</span>`;
+      }
+
+      if (isCorrect(q, given)) {
+        return `
+          <div class="feedback">
+            <div class="ok">Korrekt ✅</div>
+            <div class="muted" style="margin-top:6px;">${escapeHtml(q.explanation || "—")}</div>
+          </div>
+        `;
+      }
+
+      const correct = (q.options || [])[q.answer_index] || "";
+      return `
+        <div class="feedback">
+          <div class="bad">Ikke helt rigtigt ❌</div>
+          <div style="margin-top:6px;"><b>Rigtigt svar:</b> ${escapeHtml(correct)}</div>
+          <div class="muted" style="margin-top:6px;">${escapeHtml(q.explanation || "—")}</div>
+        </div>
+      `;
+    }
+
+    function renderCurrentQuestion() {
+      const root = el("quiz");
+      root.innerHTML = "";
+
+      if (!currentQuiz || !currentQuiz.questions || currentQuiz.questions.length === 0) {
+        root.innerHTML = `<div class="card">Ingen spørgsmål fundet.</div>`;
+        return;
+      }
+
+      const total = currentQuiz.questions.length;
+      const q = currentQuiz.questions[currentIndex];
+      const alreadyChecked = !!checkedQuestions[q.id];
+
+      const card = document.createElement("div");
+      card.className = "card";
+
+      let html = `
+        <h2 style="margin-top:0">${escapeHtml(currentQuiz.quiz_title || "Quiz")}</h2>
+        <div class="progress">Spørgsmål ${currentIndex + 1} af ${total}</div>
+        <hr style="border:none;border-top:1px solid #eee;margin:14px 0;" />
+        <p class="qtitle">${escapeHtml(q.question)}</p>
+      `;
+
+      html += (q.options || []).map((opt, idx) => {
+        const checked = answers[q.id] === idx ? "checked" : "";
+        const disabled = alreadyChecked ? "disabled" : "";
+        return `
+          <div class="opt">
+            <label>
+              <input type="radio" name="q_${q.id}" value="${idx}" ${checked} ${disabled} />
+              ${escapeHtml(opt)}
+            </label>
+          </div>
+        `;
+      }).join("");
+
+      html += `<div class="answer-box" id="feedbackBox">`;
+      if (alreadyChecked) {
+        html += getAnswerFeedbackHtml(q);
+      }
+      html += `</div>`;
+
+      html += `
+        <div class="nav-row">
+          <div>
+            <button id="prevBtn" ${currentIndex === 0 ? "disabled" : ""}>Forrige</button>
+            ${alreadyChecked ? "" : `<button id="checkBtn" class="primary">Tjek svar</button>`}
+            <button id="nextBtn">${currentIndex === total - 1 ? "Se resultat" : "Næste"}</button>
+          </div>
+        </div>
+      `;
+
+      card.innerHTML = html;
+      root.appendChild(card);
+
+      el("prevBtn").addEventListener("click", () => {
+        saveCurrentAnswer();
+        if (currentIndex > 0) {
+          currentIndex -= 1;
+          renderCurrentQuestion();
+        }
+      });
+
+      const checkBtn = document.getElementById("checkBtn");
+      if (checkBtn) {
+        checkBtn.addEventListener("click", () => {
+          saveCurrentAnswer();
+
+          const feedbackBox = document.getElementById("feedbackBox");
+          const given = answers[q.id];
+
+          if (given === null || given === undefined) {
+            feedbackBox.innerHTML = `<span class="bad">Vælg et svar først.</span>`;
+            return;
+          }
+
+          checkedQuestions[q.id] = true;
+          feedbackBox.innerHTML = getAnswerFeedbackHtml(q);
+          renderCurrentQuestion();
+        });
+      }
+
+      el("nextBtn").addEventListener("click", () => {
+        saveCurrentAnswer();
+        if (currentIndex < total - 1) {
+          currentIndex += 1;
+          renderCurrentQuestion();
+        } else {
+          renderResults();
+        }
+      });
+    }
+
+    function renderResults() {
+      const root = el("quiz");
+      root.innerHTML = "";
+
+      let score = 0;
+      const total = currentQuiz.questions.length;
+
+      currentQuiz.questions.forEach((q) => {
+        const given = answers[q.id];
+        if (isCorrect(q, given)) {
+          score += 1;
+        }
+      });
+
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <h2 style="margin-top:0">Resultat</h2>
+        <p class="score-box">Score: ${score}/${total}</p>
+        <div class="nav-row">
+          <button id="restartBtn">Se quiz igen</button>
+          <button id="backToReviewBtn" class="secondary">Lav nye valg</button>
+        </div>
+      `;
+      root.appendChild(card);
+
+      el("restartBtn").addEventListener("click", () => {
+        currentIndex = 0;
+        renderCurrentQuestion();
+      });
+
+      el("backToReviewBtn").addEventListener("click", () => {
+        answers = {};
+        checkedQuestions = {};
+        el("quiz").innerHTML = "";
+        renderReview(candidateQuiz);
+        setStatus("Vælg spørgsmål igen.");
+      });
     }
   </script>
 </body>

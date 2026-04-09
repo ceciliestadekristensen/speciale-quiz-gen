@@ -1,107 +1,200 @@
 from pathlib import Path
 from uuid import uuid4
-import traceback
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
-from app.services.quiz_pipeline import generate_quiz_from_pdf, QuizGenParams, OCRParams
+from app.services.quiz_pipeline import (
+    OCRParams,
+    QuizGenParams,
+    finalize_selected_questions,
+    generate_quiz_candidates_from_pdf,
+    regenerate_single_question_from_pdf,
+)
 
-app = FastAPI(title="QuizGen API", version="0.1")
+BASE_DIR = Path(__file__).resolve().parent.parent
+UPLOAD_DIR = BASE_DIR / "backend" / "uploads"
+FRONTEND_DIR = BASE_DIR / "frontend"
 
-# CORS (lokalt)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+app = FastAPI(title="QuizGen API")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ok lokalt; stram i prod
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-UPLOAD_DIR = Path("backend/uploads")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+@app.get("/")
+def serve_index():
+    index_path = FRONTEND_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="frontend/index.html ikke fundet")
+    return FileResponse(index_path)
 
 
 class GenerateRequest(BaseModel):
     upload_id: str
-    model: str = "llama3.2:latest"
-    num_questions: int = 10
+    num_questions: int = Field(default=10, ge=3, le=30)
+    age_group: str = "B"
+    page_from: int | None = None
+    page_to: int | None = None
 
 
-@app.get("/health")
-def health():
-    return {"ok": True}
+class FinalizeRequest(BaseModel):
+    quiz_title: str | None = None
+    selected_questions: list[dict]
+
+
+class RegenerateQuestionRequest(BaseModel):
+    upload_id: str
+    age_group: str = "B"
+    page_from: int | None = None
+    page_to: int | None = None
+    old_question: dict
+    existing_questions: list[dict] = Field(default_factory=list)
+
+
+def validate_common_inputs(upload_id: str, age_group: str, page_from: int | None, page_to: int | None) -> Path:
+    pdf_path = UPLOAD_DIR / f"{upload_id}.pdf"
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="Upload ikke fundet")
+
+    if page_from is not None and page_from < 1:
+        raise HTTPException(status_code=400, detail="Fra side skal være mindst 1")
+
+    if page_to is not None and page_to < 1:
+        raise HTTPException(status_code=400, detail="Til side skal være mindst 1")
+
+    if page_from is not None and page_to is not None and page_from > page_to:
+        raise HTTPException(status_code=400, detail="Fra side må ikke være større end til side")
+
+    allowed_groups = {"A", "B", "C", "UNG"}
+    if age_group not in allowed_groups:
+        raise HTTPException(status_code=400, detail="Hold skal være A, B, C eller UNG")
+
+    return pdf_path
 
 
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filnavn mangler")
+
     if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Kun PDF er tilladt")
+        raise HTTPException(status_code=400, detail="Kun PDF-filer er tilladt")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Filen er tom")
 
     upload_id = str(uuid4())
     save_path = UPLOAD_DIR / f"{upload_id}.pdf"
 
-    data = await file.read()
-    save_path.write_bytes(data)
+    with open(save_path, "wb") as f:
+        f.write(content)
 
-    return {"upload_id": upload_id, "filename": file.filename, "bytes": len(data)}
+    return {
+        "upload_id": upload_id,
+        "filename": file.filename,
+        "bytes": len(content),
+    }
 
 
-@app.post("/generate")
-def generate(req: GenerateRequest):
-    pdf_path = UPLOAD_DIR / f"{req.upload_id}.pdf"
-    if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail="upload_id findes ikke (ingen PDF gemt)")
+@app.post("/generate_candidates")
+def generate_candidates(req: GenerateRequest):
+    pdf_path = validate_common_inputs(
+        upload_id=req.upload_id,
+        age_group=req.age_group,
+        page_from=req.page_from,
+        page_to=req.page_to,
+    )
 
     pdf_bytes = pdf_path.read_bytes()
 
-    # Produkt-defaults: læs "hele" PDF (højt loft) og send en fornuftig mængde tekst
-    params = QuizGenParams(
-        model=req.model,
-        num_questions=req.num_questions,
-        focus="Blandet",
-        bloom="Understand",
-        max_pages=120,
-        max_chars=18000,
-        num_ctx=2048,
-        num_predict=700,
-        timeout=420,
-        ocr=OCRParams(use_ocr=False),
-    )
-
     try:
-        quiz, debug = generate_quiz_from_pdf(pdf_bytes, params)
-
-        # Hvis modellen giver færre end ønsket, prøv én gang mere
-        if isinstance(quiz, dict) and "questions" in quiz and len(quiz["questions"]) < req.num_questions:
-            quiz2, debug2 = generate_quiz_from_pdf(pdf_bytes, params)
-            if len(quiz2.get("questions", [])) > len(quiz.get("questions", [])):
-                quiz, debug = quiz2, debug2
+        candidates, debug = generate_quiz_candidates_from_pdf(
+            pdf_bytes=pdf_bytes,
+            params=QuizGenParams(
+                num_questions=req.num_questions,
+                age_group=req.age_group,
+                page_from=req.page_from,
+                page_to=req.page_to,
+                ocr=OCRParams(
+                    use_ocr=True,
+                    max_pages=12,
+                    dpi=160,
+                    lang="eng",
+                ),
+            ),
+        )
 
         return {
-            "quiz": quiz,
+            "quiz": candidates,
             "debug": {
                 "latency_s": debug.model_latency_s,
                 "did_repair": debug.did_repair,
-                "extracted_chars": debug.extracted_chars,
                 "used_ocr": debug.used_ocr,
+                "extracted_chars": debug.extracted_chars,
+                "page_range": debug.page_range,
             },
         }
 
-    except RuntimeError as e:
-        print("\n[GENERATE RuntimeError]")
-        print(str(e))
-        print()
-        raise HTTPException(status_code=422, detail=str(e))
-
     except Exception as e:
-        print("\n[GENERATE Exception]")
-        traceback.print_exc()
-        print()
-        raise HTTPException(status_code=500, detail=f"Intern fejl i generate: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-# Server frontend på /app (IKKE /)
-app.mount("/app", StaticFiles(directory="frontend", html=True), name="frontend")
+@app.post("/regenerate_question")
+def regenerate_question(req: RegenerateQuestionRequest):
+    pdf_path = validate_common_inputs(
+        upload_id=req.upload_id,
+        age_group=req.age_group,
+        page_from=req.page_from,
+        page_to=req.page_to,
+    )
+
+    pdf_bytes = pdf_path.read_bytes()
+
+    try:
+        new_question = regenerate_single_question_from_pdf(
+            pdf_bytes=pdf_bytes,
+            params=QuizGenParams(
+                num_questions=1,
+                age_group=req.age_group,
+                page_from=req.page_from,
+                page_to=req.page_to,
+                ocr=OCRParams(
+                    use_ocr=True,
+                    max_pages=12,
+                    dpi=160,
+                    lang="eng",
+                ),
+            ),
+            old_question=req.old_question,
+            existing_questions=req.existing_questions,
+        )
+
+        return {"question": new_question}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/finalize_quiz")
+def finalize_quiz(req: FinalizeRequest):
+    if not req.selected_questions:
+        raise HTTPException(status_code=400, detail="Du skal vælge mindst ét spørgsmål")
+
+    try:
+        quiz = finalize_selected_questions(
+            selected_questions=req.selected_questions,
+            quiz_title=req.quiz_title or "Valgt quiz",
+        )
+        return {"quiz": quiz}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
