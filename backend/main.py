@@ -1,3 +1,5 @@
+# run: uvicorn backend.main:app --reload
+
 from pathlib import Path
 from uuid import uuid4
 
@@ -61,6 +63,14 @@ class RegenerateQuestionRequest(BaseModel):
     existing_questions: list[dict] = Field(default_factory=list)
 
 
+def should_use_ocr_for_range(page_from: int | None, page_to: int | None) -> bool:
+    # De første undervisningssider har brugbar PDF-tekst. OCR ovenpå dem giver
+    # ofte ekstra støj, mens senere billedtunge sider stadig har brug for OCR.
+    if page_to is not None and page_to <= 15:
+        return False
+    return True
+
+
 def validate_common_inputs(upload_id: str, age_group: str, page_from: int | None, page_to: int | None) -> Path:
     pdf_path = UPLOAD_DIR / f"{upload_id}.pdf"
     if not pdf_path.exists():
@@ -117,22 +127,32 @@ def generate_candidates(req: GenerateRequest):
     )
 
     pdf_bytes = pdf_path.read_bytes()
+    params = QuizGenParams(
+        num_questions=req.num_questions,
+        age_group=req.age_group,
+        page_from=req.page_from,
+        page_to=req.page_to,
+        ocr=OCRParams(
+            use_ocr=should_use_ocr_for_range(req.page_from, req.page_to),
+            max_pages=15,
+            dpi=130,
+            lang="dan",
+        ),
+    )
 
     try:
         candidates, debug = generate_quiz_candidates_from_pdf(
             pdf_bytes=pdf_bytes,
-            params=QuizGenParams(
-                num_questions=req.num_questions,
-                age_group=req.age_group,
-                page_from=req.page_from,
-                page_to=req.page_to,
-                ocr=OCRParams(
-                    use_ocr=True,
-                    max_pages=12,
-                    dpi=160,
-                    lang="eng",
-                ),
-            ),
+            params=params,
+        )
+        questions = candidates.get("questions", []) if isinstance(candidates, dict) else []
+        generated_count = sum(1 for q in questions if q.get("origin") != "example")
+        print(
+            "Quiz generation:",
+            f"requested={req.num_questions}",
+            f"returned={len(questions)}",
+            f"generated={generated_count}",
+            f"note={debug.raw_model_output}",
         )
 
         return {
@@ -143,10 +163,15 @@ def generate_candidates(req: GenerateRequest):
                 "used_ocr": debug.used_ocr,
                 "extracted_chars": debug.extracted_chars,
                 "page_range": debug.page_range,
+                "returned_count": len(questions),
+                "generated_count": generated_count,
+                "note": debug.raw_model_output,
             },
         }
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -170,10 +195,10 @@ def regenerate_question(req: RegenerateQuestionRequest):
                 page_from=req.page_from,
                 page_to=req.page_to,
                 ocr=OCRParams(
-                    use_ocr=True,
+                    use_ocr=should_use_ocr_for_range(req.page_from, req.page_to),
                     max_pages=12,
                     dpi=160,
-                    lang="eng",
+                    lang="dan",
                 ),
             ),
             old_question=req.old_question,
@@ -188,7 +213,7 @@ def regenerate_question(req: RegenerateQuestionRequest):
 @app.post("/finalize_quiz")
 def finalize_quiz(req: FinalizeRequest):
     if not req.selected_questions:
-        raise HTTPException(status_code=400, detail="Du skal vælge mindst ét spørgsmål")
+        raise HTTPException(status_code=400, detail="Du skal vælge mindst et spørgsmål")
 
     try:
         quiz = finalize_selected_questions(

@@ -3,12 +3,33 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>QuizGen</title>
+  <title>Quiz</title>
   <style>
     body {
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      margin: 24px;
+      margin: 24px auto;
+      padding: 0 24px;
       max-width: 980px;
+      background: #fff;
+      color: #111;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 8px;
+    }
+
+    .intro-steps {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 18px;
+      text-align: center;
+    }
+
+    .intro-arrow {
+      color: #999;
     }
 
     .card {
@@ -73,6 +94,50 @@
 
     .opt {
       margin: 10px 0;
+    }
+
+    .answer-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      line-height: 1.35;
+    }
+
+    .answer-letter {
+      min-width: 28px;
+      font-weight: 650;
+    }
+
+    .answer-dot {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      display: inline-block;
+      flex: 0 0 18px;
+      border: 1px solid rgba(0, 0, 0, 0.18);
+    }
+
+    .answer-dot-blue {
+      background: #2563eb;
+    }
+
+    .answer-dot-green {
+      background: #16a34a;
+    }
+
+    .answer-dot-red {
+      background: #dc2626;
+    }
+
+    .correct-marker {
+      font-weight: 650;
+    }
+
+    .correct-answer-line {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
     .ok {
@@ -150,12 +215,28 @@
       font-size: 12px;
       color: #444;
     }
+
+    .notice-box {
+      margin-top: 12px;
+      color: #666;
+      font-size: 14px;
+    }
+
+    .hidden {
+      display: none;
+    }
   </style>
 </head>
 <body>
-  <h1>QuizGen</h1>
-  <p class="muted">
-    Upload en PDF, generér forslag, vælg de bedste spørgsmål, og start derefter quizzen.
+  <h1>Quiz</h1>
+  <p class="muted intro-steps">
+    <span>Upload en PDF</span>
+    <span class="intro-arrow">→</span>
+    <span>Generer forslag</span>
+    <span class="intro-arrow">→</span>
+    <span>Vælg spørgsmål</span>
+    <span class="intro-arrow">→</span>
+    <span>Start quizzen</span>
   </p>
 
   <div class="card">
@@ -170,14 +251,14 @@
     <div class="row">
       <label>Hold:
         <select id="ageGroup">
-          <option value="A">A (6–8 år)</option>
-          <option value="B" selected>B (9–12 år)</option>
-          <option value="C">C (13–15 år)</option>
-          <option value="UNG">Ungdom (16–18 år)</option>
+          <option value="A">A (6 - 8 år)</option>
+          <option value="B" selected>B (9 - 12 år)</option>
+          <option value="C">C (13 - 15 år)</option>
+          <option value="UNG">Ungdom (16 - 18 år)</option>
         </select>
       </label>
 
-      <label>Antal spørgsmål i endelig quiz:
+      <label>Antal spørgsmål:
         <input id="numq" type="number" value="8" min="3" max="30" />
       </label>
 
@@ -191,7 +272,7 @@
     </div>
 
     <div class="row" style="margin-top:12px;">
-      <button id="genBtn" class="primary" disabled>Generér forslag</button>
+      <button id="genBtn" class="primary" disabled>Generer forslag</button>
     </div>
 
     <div style="margin-top:12px" class="status" id="status">Status: klar</div>
@@ -239,6 +320,40 @@
       el("quiz").innerHTML = "";
     }
 
+    function usesColorAnswers() {
+      return generationContext.age_group === "A";
+    }
+
+    function answerMarkerText(index) {
+      if (usesColorAnswers()) {
+        return ["Blå prik", "Grøn prik", "Rød prik"][index] || "";
+      }
+      return ["A)", "B)", "C)"][index] || "";
+    }
+
+    function answerMarkerHtml(index) {
+      if (usesColorAnswers()) {
+        const colors = [
+          { name: "Blå", className: "answer-dot-blue" },
+          { name: "Grøn", className: "answer-dot-green" },
+          { name: "Rød", className: "answer-dot-red" }
+        ];
+        const color = colors[index] || colors[0];
+        return `<span class="answer-dot ${color.className}" title="${color.name} prik" aria-label="${color.name} prik"></span>`;
+      }
+      return `<span class="answer-letter">${answerMarkerText(index)}</span>`;
+    }
+
+    function correctAnswerHtml(q) {
+      const correct = (q.options || [])[q.answer_index] || "";
+      return `
+        <span class="correct-answer-line">
+          ${answerMarkerHtml(q.answer_index)}
+          <span>${escapeHtml(correct)}</span>
+        </span>
+      `;
+    }
+
     el("uploadBtn").addEventListener("click", async () => {
       const file = el("file").files[0];
       if (!file) {
@@ -269,10 +384,10 @@
 
         el("genBtn").disabled = false;
         setStatus("Upload ok. Klar til at generere forslag.");
-      } catch (err) {
+        } catch (err) {
         console.error(err);
-        alert(err.message);
-        setStatus("Fejl ved upload.");
+        alert("Fejl ved generering: " + err.message);
+        setStatus("Fejl ved generering: " + err.message);
       } finally {
         el("uploadBtn").disabled = false;
       }
@@ -321,7 +436,9 @@
         candidateQuiz = data.quiz;
         selectedQuestionIds = new Set();
 
-        setStatus("Forslag genereret. Vælg de bedste spørgsmål.");
+        const pageRange = data.debug?.page_range ?? "-";
+
+        setStatus(`Forslag genereret. Sider: ${pageRange}.`);
         renderReview(candidateQuiz);
       } catch (err) {
         console.error(err);
@@ -343,18 +460,22 @@
 
       const wrapper = document.createElement("div");
       wrapper.className = "card";
+      const reviewNotice = quiz.questions.length < requestedQuestionCount
+        ? `Der kunne kun genereres ${quiz.questions.length} ud af ${requestedQuestionCount} ønskede spørgsmål baseret på det indtastede sideinterval.`
+        : `Der vises ${quiz.questions.length} ud af ${requestedQuestionCount} ønskede spørgsmål.`;
       wrapper.innerHTML = `
         <h2 style="margin-top:0">Vælg spørgsmål</h2>
         <p class="muted">
-          Systemet har lavet flere forslag end nødvendigt. Vælg de bedste ${requestedQuestionCount} spørgsmål.
+          Vælg de spørgsmål, du vil have med i quizzen.
         </p>
+        <div class="notice-box">${escapeHtml(reviewNotice)}</div>
         <div class="row" style="margin-top:12px;">
           <label>Quiztitel:
             <input id="quizTitleInput" type="text" value="Valgt quiz" />
           </label>
         </div>
         <div style="margin-top:12px;">
-          <span class="pill" id="selectedCountPill">Valgt: 0 / ${requestedQuestionCount}</span>
+          <span class="pill" id="selectedCountPill">Valgt: 0 / maks. ${requestedQuestionCount}</span>
         </div>
         <div id="candidateList" style="margin-top:16px;"></div>
         <div class="row" style="margin-top:18px;">
@@ -370,21 +491,21 @@
         card.className = "card candidate-card";
         card.id = `candidate_${q.id}`;
 
-        const correctText = (q.options || [])[q.answer_index] || "";
-
         card.innerHTML = `
           <div class="row" style="justify-content:space-between;align-items:flex-start;">
             <div style="flex:1 1 600px;">
               <p style="margin:0 0 10px;font-weight:650;">${escapeHtml(q.question)}</p>
-              <div class="opt">A) ${escapeHtml(q.options?.[0] || "")}</div>
-              <div class="opt">B) ${escapeHtml(q.options?.[1] || "")}</div>
-              <div class="opt">C) ${escapeHtml(q.options?.[2] || "")}</div>
-              <div style="margin-top:10px;"><b>Korrekt svar:</b> ${escapeHtml(correctText)}</div>
-              <div class="muted" style="margin-top:8px;">Forklaring: ${escapeHtml(q.explanation || "")}</div>
+
+              ${(q.options || []).map((opt, idx) => `
+                <div class="opt answer-option">
+                  ${answerMarkerHtml(idx)}
+                  <span>${escapeHtml(opt)}</span>
+                </div>
+              `).join("")}
+              <div style="margin-top:10px;"><b>Korrekt svar:</b> ${correctAnswerHtml(q)}</div>
             </div>
             <div style="min-width:220px; display:flex; flex-direction:column; gap:8px;">
               <button class="primary select-btn" data-id="${q.id}">Vælg</button>
-              <button class="warn regen-btn" data-id="${q.id}">Lav nyt forslag</button>
             </div>
           </div>
         `;
@@ -393,10 +514,6 @@
 
       document.querySelectorAll(".select-btn").forEach((btn) => {
         btn.addEventListener("click", () => toggleSelectQuestion(Number(btn.dataset.id)));
-      });
-
-      document.querySelectorAll(".regen-btn").forEach((btn) => {
-        btn.addEventListener("click", () => regenerateOneQuestion(Number(btn.dataset.id)));
       });
 
       document.getElementById("finalizeBtn").addEventListener("click", finalizeSelectedQuiz);
@@ -419,7 +536,7 @@
     function updateSelectionUI() {
       const pill = document.getElementById("selectedCountPill");
       if (pill) {
-        pill.textContent = `Valgt: ${selectedQuestionIds.size} / ${requestedQuestionCount}`;
+        pill.textContent = `Valgt: ${selectedQuestionIds.size} / maks. ${requestedQuestionCount}`;
       }
 
       (candidateQuiz?.questions || []).forEach((q) => {
@@ -439,62 +556,20 @@
 
       const finalizeBtn = document.getElementById("finalizeBtn");
       if (finalizeBtn) {
-        finalizeBtn.disabled = selectedQuestionIds.size !== requestedQuestionCount;
-      }
-    }
-
-    async function regenerateOneQuestion(questionId) {
-      const oldQuestion = (candidateQuiz?.questions || []).find((q) => q.id === questionId);
-      if (!oldQuestion) {
-        alert("Kunne ikke finde spørgsmålet.");
-        return;
-      }
-
-      const existingQuestions = (candidateQuiz?.questions || []).filter((q) => q.id !== questionId);
-
-      setStatus("Laver nyt forslag til ét spørgsmål...");
-
-      try {
-        const res = await fetch(API + "/regenerate_question", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            upload_id: uploadId,
-            age_group: generationContext.age_group,
-            page_from: generationContext.page_from,
-            page_to: generationContext.page_to,
-            old_question: oldQuestion,
-            existing_questions: existingQuestions
-          })
-        });
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.detail || "Kunne ikke lave nyt forslag");
-        }
-
-        candidateQuiz.questions = candidateQuiz.questions.map((q) =>
-          q.id === questionId ? { ...data.question, id: questionId } : q
-        );
-
-        if (selectedQuestionIds.has(questionId)) {
-          selectedQuestionIds.delete(questionId);
-        }
-
-        renderReview(candidateQuiz);
-        setStatus("Nyt forslag lavet.");
-      } catch (err) {
-        console.error(err);
-        alert(err.message);
-        setStatus("Fejl ved nyt forslag.");
+        finalizeBtn.disabled = selectedQuestionIds.size < 1;
       }
     }
 
     async function finalizeSelectedQuiz() {
       const selectedQuestions = (candidateQuiz?.questions || []).filter((q) => selectedQuestionIds.has(q.id));
 
-      if (selectedQuestions.length !== requestedQuestionCount) {
-        alert(`Vælg præcis ${requestedQuestionCount} spørgsmål.`);
+      if (selectedQuestions.length < 1) {
+        alert("Vælg mindst ét spørgsmål.");
+        return;
+      }
+
+      if (selectedQuestions.length > requestedQuestionCount) {
+        alert(`Vælg maks. ${requestedQuestionCount} spørgsmål.`);
         return;
       }
 
@@ -554,17 +629,17 @@
       if (isCorrect(q, given)) {
         return `
           <div class="feedback">
-            <div class="ok">Korrekt ✅</div>
+            <div class="ok">Korrekt</div>
+            <div style="margin-top:6px;"><b>Korrekt svar:</b> ${correctAnswerHtml(q)}</div>
             <div class="muted" style="margin-top:6px;">${escapeHtml(q.explanation || "—")}</div>
           </div>
         `;
       }
 
-      const correct = (q.options || [])[q.answer_index] || "";
       return `
         <div class="feedback">
-          <div class="bad">Ikke helt rigtigt ❌</div>
-          <div style="margin-top:6px;"><b>Rigtigt svar:</b> ${escapeHtml(correct)}</div>
+          <div class="bad">Ikke helt rigtigt</div>
+          <div style="margin-top:6px;"><b>Korrekt svar:</b> ${correctAnswerHtml(q)}</div>
           <div class="muted" style="margin-top:6px;">${escapeHtml(q.explanation || "—")}</div>
         </div>
       `;
@@ -598,9 +673,10 @@
         const disabled = alreadyChecked ? "disabled" : "";
         return `
           <div class="opt">
-            <label>
+            <label class="answer-option">
               <input type="radio" name="q_${q.id}" value="${idx}" ${checked} ${disabled} />
-              ${escapeHtml(opt)}
+              ${answerMarkerHtml(idx)}
+              <span>${escapeHtml(opt)}</span>
             </label>
           </div>
         `;
