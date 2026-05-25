@@ -239,7 +239,7 @@
     <span>Start quizzen</span>
   </p>
 
-  <div class="card">
+  <div class="card" id="generationPanel">
     <div class="row">
       <input id="file" type="file" accept="application/pdf" />
       <button id="uploadBtn" class="primary">Upload</button>
@@ -297,7 +297,6 @@
 
     let currentQuiz = null;
     let currentIndex = 0;
-    let answers = {};
     let checkedQuestions = {};
 
     const el = (id) => document.getElementById(id);
@@ -318,6 +317,10 @@
     function clearViews() {
       el("review").innerHTML = "";
       el("quiz").innerHTML = "";
+    }
+
+    function setGenerationPanelVisible(visible) {
+      el("generationPanel").classList.toggle("hidden", !visible);
     }
 
     function usesColorAnswers() {
@@ -439,6 +442,7 @@
         const pageRange = data.debug?.page_range ?? "-";
 
         setStatus(`Forslag genereret. Sider: ${pageRange}.`);
+        setGenerationPanelVisible(false);
         renderReview(candidateQuiz);
       } catch (err) {
         console.error(err);
@@ -593,7 +597,6 @@
 
         currentQuiz = data.quiz;
         currentIndex = 0;
-        answers = {};
         checkedQuestions = {};
 
         el("review").innerHTML = "";
@@ -606,39 +609,9 @@
       }
     }
 
-    function saveCurrentAnswer() {
-      if (!currentQuiz) return;
-      const q = currentQuiz.questions[currentIndex];
-      if (!q) return;
-
-      const chosen = document.querySelector(`input[name="q_${q.id}"]:checked`);
-      answers[q.id] = chosen ? Number(chosen.value) : null;
-    }
-
-    function isCorrect(q, given) {
-      return given === q.answer_index;
-    }
-
     function getAnswerFeedbackHtml(q) {
-      const given = answers[q.id];
-
-      if (given === null || given === undefined) {
-        return `<span class="bad">Vælg et svar først.</span>`;
-      }
-
-      if (isCorrect(q, given)) {
-        return `
-          <div class="feedback">
-            <div class="ok">Korrekt</div>
-            <div style="margin-top:6px;"><b>Korrekt svar:</b> ${correctAnswerHtml(q)}</div>
-            <div class="muted" style="margin-top:6px;">${escapeHtml(q.explanation || "—")}</div>
-          </div>
-        `;
-      }
-
       return `
         <div class="feedback">
-          <div class="bad">Ikke helt rigtigt</div>
           <div style="margin-top:6px;"><b>Korrekt svar:</b> ${correctAnswerHtml(q)}</div>
           <div class="muted" style="margin-top:6px;">${escapeHtml(q.explanation || "—")}</div>
         </div>
@@ -669,15 +642,12 @@
       `;
 
       html += (q.options || []).map((opt, idx) => {
-        const checked = answers[q.id] === idx ? "checked" : "";
-        const disabled = alreadyChecked ? "disabled" : "";
         return `
           <div class="opt">
-            <label class="answer-option">
-              <input type="radio" name="q_${q.id}" value="${idx}" ${checked} ${disabled} />
+            <div class="answer-option">
               ${answerMarkerHtml(idx)}
               <span>${escapeHtml(opt)}</span>
-            </label>
+            </div>
           </div>
         `;
       }).join("");
@@ -692,8 +662,8 @@
         <div class="nav-row">
           <div>
             <button id="prevBtn" ${currentIndex === 0 ? "disabled" : ""}>Forrige</button>
-            ${alreadyChecked ? "" : `<button id="checkBtn" class="primary">Tjek svar</button>`}
-            <button id="nextBtn">${currentIndex === total - 1 ? "Se resultat" : "Næste"}</button>
+            ${alreadyChecked ? "" : `<button id="revealBtn" class="primary">Se det korrekte svar</button>`}
+            <button id="nextBtn">${currentIndex === total - 1 ? "Afslut quiz" : "Næste"}</button>
           </div>
         </div>
       `;
@@ -702,26 +672,16 @@
       root.appendChild(card);
 
       el("prevBtn").addEventListener("click", () => {
-        saveCurrentAnswer();
         if (currentIndex > 0) {
           currentIndex -= 1;
           renderCurrentQuestion();
         }
       });
 
-      const checkBtn = document.getElementById("checkBtn");
-      if (checkBtn) {
-        checkBtn.addEventListener("click", () => {
-          saveCurrentAnswer();
-
+      const revealBtn = document.getElementById("revealBtn");
+      if (revealBtn) {
+        revealBtn.addEventListener("click", () => {
           const feedbackBox = document.getElementById("feedbackBox");
-          const given = answers[q.id];
-
-          if (given === null || given === undefined) {
-            feedbackBox.innerHTML = `<span class="bad">Vælg et svar først.</span>`;
-            return;
-          }
-
           checkedQuestions[q.id] = true;
           feedbackBox.innerHTML = getAnswerFeedbackHtml(q);
           renderCurrentQuestion();
@@ -729,7 +689,6 @@
       }
 
       el("nextBtn").addEventListener("click", () => {
-        saveCurrentAnswer();
         if (currentIndex < total - 1) {
           currentIndex += 1;
           renderCurrentQuestion();
@@ -743,39 +702,23 @@
       const root = el("quiz");
       root.innerHTML = "";
 
-      let score = 0;
       const total = currentQuiz.questions.length;
-
-      currentQuiz.questions.forEach((q) => {
-        const given = answers[q.id];
-        if (isCorrect(q, given)) {
-          score += 1;
-        }
-      });
 
       const card = document.createElement("div");
       card.className = "card";
       card.innerHTML = `
-        <h2 style="margin-top:0">Resultat</h2>
-        <p class="score-box">Score: ${score}/${total}</p>
+        <h2 style="margin-top:0">Quiz færdig</h2>
+        <p class="score-box">I har gennemgået ${total} spørgsmål.</p>
         <div class="nav-row">
           <button id="restartBtn">Se quiz igen</button>
-          <button id="backToReviewBtn" class="secondary">Lav nye valg</button>
         </div>
       `;
       root.appendChild(card);
 
       el("restartBtn").addEventListener("click", () => {
         currentIndex = 0;
-        renderCurrentQuestion();
-      });
-
-      el("backToReviewBtn").addEventListener("click", () => {
-        answers = {};
         checkedQuestions = {};
-        el("quiz").innerHTML = "";
-        renderReview(candidateQuiz);
-        setStatus("Vælg spørgsmål igen.");
+        renderCurrentQuestion();
       });
     }
   </script>
