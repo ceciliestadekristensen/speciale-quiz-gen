@@ -173,18 +173,14 @@ Quizzen følger et fast JSON-format:
     {
       "id": 1,
       "type": "mcq",
-      "question": "Hvad skal du vaske dit peakflowmeter i?",
-      "options": [
-        "Lunkent opvaskevand",
-        "Koldt opvaskevand",
-        "Varmt vand uden opvaskemiddel"
-      ],
+      "question": "Eksempel på et genereret spørgsmål",
+      "options": ["Svar A", "Svar B", "Svar C"],
       "answer_index": 0,
-      "correct_answer": "Lunkent opvaskevand",
-      "explanation": "Du skal vaske dit peakflowmeter i lunkent opvaskevand.",
-      "source_page": 12,
-      "source_fact_id": 3,
-      "topic": "Håndtering af peakflowmeter",
+      "correct_answer": "Svar A",
+      "explanation": "Kort forklaring på det korrekte svar.",
+      "source_page": 1,
+      "source_fact_id": 1,
+      "topic": "Eksempel",
       "difficulty": "Let",
       "list_group": ""
     }
