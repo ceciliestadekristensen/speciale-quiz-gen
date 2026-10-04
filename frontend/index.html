@@ -564,7 +564,6 @@
     function questionEditorHtml(q) {
       const options = q?.options || ["", "", ""];
       const answerIndex = q ? q.answer_index : null;
-      const explanation = (q?.explanation || "") === "Forklaring mangler." ? "" : (q?.explanation || "");
       return `
         <div class="editor">
           <h3 style="margin:0;">${q ? "Rediger spørgsmål" : "Nyt spørgsmål"}</h3>
@@ -582,9 +581,6 @@
               </label>
             </div>
           `).join("")}
-          <label>Forklaring (valgfri, vises når det rigtige svar vises)
-            <textarea class="edit-explanation" rows="2">${escapeHtml(explanation)}</textarea>
-          </label>
           <div class="bad editor-error"></div>
           <div class="row">
             <button class="primary save-edit-btn">Gem</button>
@@ -650,7 +646,6 @@
       const question = card.querySelector(".edit-question").value.trim();
       const options = [...card.querySelectorAll(".edit-option")].map((input) => input.value.trim());
       const checked = card.querySelector(".edit-correct:checked");
-      const explanation = card.querySelector(".edit-explanation").value.trim();
       const errorBox = card.querySelector(".editor-error");
 
       let error = "";
@@ -674,7 +669,8 @@
         options,
         answer_index: answerIndex,
         correct_answer: options[answerIndex],
-        explanation,
+        // En gammel forklaring kan passe dårligt til et rettet svar, så den fjernes.
+        explanation: "",
         origin: "teacher"
       };
 
