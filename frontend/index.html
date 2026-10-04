@@ -387,14 +387,6 @@
       `;
     }
 
-    function explanationHtml(q) {
-      const explanation = (q.explanation || "").trim();
-      if (!explanation || explanation === "Eksempelspørgsmål baseret på materialet." || explanation === "Forklaring mangler.") {
-        return "";
-      }
-      return `<div class="muted" style="margin-top:6px;">${escapeHtml(explanation)}</div>`;
-    }
-
     el("uploadBtn").addEventListener("click", async () => {
       const file = el("file").files[0];
       if (!file) {
@@ -788,7 +780,6 @@
       return `
         <div class="feedback">
           <div style="margin-top:6px;"><b>Korrekt svar:</b> ${correctAnswerHtml(q)}</div>
-          ${explanationHtml(q)}
         </div>
       `;
     }
