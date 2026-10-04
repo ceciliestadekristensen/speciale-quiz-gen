@@ -1,10 +1,18 @@
 # run: uvicorn backend.main:app --reload
+# Til brugere: dobbeltklik på start.bat (kører på http://127.0.0.1:8000)
+#
+# Børnevenlig eksamensforklaring:
+# Denne fil er "døren" ind til backend. Frontend kalder ruterne her, fx
+# /upload når læreren uploader en PDF, /generate_candidates når der skal
+# laves quizforslag, og /finalize_quiz når læreren har valgt de endelige
+# spørgsmål. FastAPI er altså ikke AI'en. FastAPI er tjeneren mellem
+# browseren og Python-koden, der laver arbejdet.
 
+import time
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -22,15 +30,28 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# Uploadede PDF'er gemmes kun midlertidigt. Filer ældre end dette slettes
+# automatisk, så mappen ikke vokser for evigt på brugerens computer.
+UPLOAD_MAX_AGE_SECONDS = 24 * 60 * 60
+
+
+def cleanup_old_uploads() -> None:
+    cutoff = time.time() - UPLOAD_MAX_AGE_SECONDS
+    for pdf in UPLOAD_DIR.glob("*.pdf"):
+        try:
+            if pdf.stat().st_mtime < cutoff:
+                pdf.unlink()
+        except OSError:
+            pass
+
+
+cleanup_old_uploads()
+
 app = FastAPI(title="QuizGen API")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Ingen CORS-middleware: frontend serveres af samme server (se serve_index),
+# så browseren kalder backend fra samme adresse. Uden CORS kan andre
+# hjemmesider ikke kalde QuizGen's API fra brugerens browser.
 
 
 @app.get("/")
@@ -38,7 +59,8 @@ def serve_index():
     index_path = FRONTEND_DIR / "index.html"
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="frontend/index.html ikke fundet")
-    return FileResponse(index_path)
+    # no-store: browseren skal altid hente den nyeste version af siden.
+    return FileResponse(index_path, headers={"Cache-Control": "no-store"})
 
 
 class GenerateRequest(BaseModel):
@@ -64,6 +86,10 @@ class RegenerateQuestionRequest(BaseModel):
 
 
 def should_use_ocr_for_range(page_from: int | None, page_to: int | None) -> bool:
+    # Denne funktion svarer kun på: "Må OCR bruges for dette sideinterval?"
+    # return False betyder: nej, OCR er slået fra for intervallet.
+    # return True betyder: ja, OCR er tilladt, hvis senere sider faktisk
+    # viser sig at have for lidt almindelig PDF-tekst.
     # De første undervisningssider har brugbar PDF-tekst. OCR ovenpå dem giver
     # ofte ekstra støj, mens senere billedtunge sider stadig har brug for OCR.
     if page_to is not None and page_to <= 15:
@@ -72,6 +98,9 @@ def should_use_ocr_for_range(page_from: int | None, page_to: int | None) -> bool
 
 
 def validate_common_inputs(upload_id: str, age_group: str, page_from: int | None, page_to: int | None) -> Path:
+    # Fælles input-tjek for de ruter, der arbejder med en uploadet PDF.
+    # Tænk på det som en vagt ved døren: findes PDF'en, er siderne gyldige,
+    # og er aldersgruppen en af dem systemet kender?
     pdf_path = UPLOAD_DIR / f"{upload_id}.pdf"
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="Upload ikke fundet")
@@ -94,6 +123,9 @@ def validate_common_inputs(upload_id: str, age_group: str, page_from: int | None
 
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
+    # Frontend sender PDF'en hertil. Backend gemmer filen lokalt og returnerer
+    # et upload_id. Det id bruges senere, så frontend ikke skal sende hele PDF'en
+    # igen, når der skal genereres spørgsmål.
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filnavn mangler")
 
@@ -103,6 +135,8 @@ async def upload_pdf(file: UploadFile = File(...)):
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Filen er tom")
+
+    cleanup_old_uploads()
 
     upload_id = str(uuid4())
     save_path = UPLOAD_DIR / f"{upload_id}.pdf"
@@ -119,6 +153,10 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 @app.post("/generate_candidates")
 def generate_candidates(req: GenerateRequest):
+    # Dette er hovedruten for quizgenerering.
+    # Frontend sender upload_id, aldersgruppe, antal spørgsmål og sideinterval.
+    # FastAPI laver det om til en GenerateRequest, og backend sender derefter
+    # PDF-bytes + parametre videre til quiz-pipelinen.
     pdf_path = validate_common_inputs(
         upload_id=req.upload_id,
         age_group=req.age_group,
@@ -128,6 +166,9 @@ def generate_candidates(req: GenerateRequest):
 
     pdf_bytes = pdf_path.read_bytes()
     params = QuizGenParams(
+        # QuizGenParams samler lærerens valg og modelindstillinger i ét objekt.
+        # Det gør resten af pipelinen lettere at styre, fordi alle valg ligger
+        # samme sted: alder, sider, antal spørgsmål og OCR-regler.
         num_questions=req.num_questions,
         age_group=req.age_group,
         page_from=req.page_from,
@@ -177,6 +218,9 @@ def generate_candidates(req: GenerateRequest):
 
 @app.post("/regenerate_question")
 def regenerate_question(req: RegenerateQuestionRequest):
+    # Denne rute bruges, hvis ét spørgsmål skal laves om.
+    # Backend får det gamle spørgsmål og de eksisterende spørgsmål, så modellen
+    # kan prøve at lave et nyt uden bare at gentage det samme.
     pdf_path = validate_common_inputs(
         upload_id=req.upload_id,
         age_group=req.age_group,
@@ -212,6 +256,9 @@ def regenerate_question(req: RegenerateQuestionRequest):
 
 @app.post("/finalize_quiz")
 def finalize_quiz(req: FinalizeRequest):
+    # Når læreren har valgt quizkandidater i frontend, sendes de hertil.
+    # Backend validerer dem igen og returnerer den endelige quiz.
+    # Det er her teacher review bliver til den færdige quiz.
     if not req.selected_questions:
         raise HTTPException(status_code=400, detail="Du skal vælge mindst et spørgsmål")
 

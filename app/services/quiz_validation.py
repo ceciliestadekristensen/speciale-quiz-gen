@@ -1,20 +1,33 @@
 # app/services/quiz_validation.py
+#
+# Børnevenlig eksamensforklaring:
+# Denne fil er systemets "kontrol-liste". Her tjekker Python-kode om LLM'ens
+# svar har den rigtige struktur. Det er anderledes end review-prompten:
+# - validation = fast kode med hårde regler
+# - repair/review = prompts til LLM'en
+# - teacher review = lærerens endelige valg
 
 import re
 from typing import Any
 
 
 def norm_ws(s: str) -> str:
+    # Rydder op i tekst ved at gøre mange mellemrum/linjeskift til ét mellemrum.
+    # Det gør sammenligninger mere fair, fx "Lunkent   vand" vs "Lunkent vand".
     return re.sub(r"\s+", " ", (s or "")).strip()
 
 
 def question_signature(question: dict[str, Any]) -> str:
+    # Laver en simpel "fingeraftrykstekst" for spørgsmålet.
+    # Bruges til at opdage dubletter, selv hvis der er små tegnsætningsforskelle.
     q = norm_ws(str(question.get("question", ""))).lower()
     q = re.sub(r"[^a-zæøå0-9 ]", "", q)
     return q
 
 
 def semantic_question_signature(question: dict[str, Any]) -> str:
+    # Laver et lidt smartere fingeraftryk ved at fjerne små stopord.
+    # Ideen er at fange spørgsmål, der betyder næsten det samme.
     text = norm_ws(str(question.get("question", ""))).lower()
     text = re.sub(r"peak\s*flow", "peakflow", text)
     text = re.sub(r"[^a-zæøå0-9 ]", " ", text)
@@ -28,6 +41,8 @@ def semantic_question_signature(question: dict[str, Any]) -> str:
 
 
 def answer_signature(question: dict[str, Any]) -> str:
+    # Laver et fingeraftryk af det korrekte svar, så systemet kan undgå at lave
+    # flere genererede spørgsmål med samme svar fra samme side.
     answer = norm_ws(str(question.get("correct_answer", ""))).lower()
     answer = re.sub(r"peak\s*flow", "peakflow", answer)
     answer = re.sub(r"[^a-zæøå0-9 ]", " ", answer)
@@ -35,6 +50,9 @@ def answer_signature(question: dict[str, Any]) -> str:
 
 
 def filter_out_similar_questions(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Fjerner spørgsmål, der ligner hinanden for meget.
+    # Det hjælper læreren, fordi kandidatlisten ikke skal fyldes med næsten
+    # samme spørgsmål sagt på lidt forskellige måder.
     seen_question = set()
     seen_semantic_question = set()
     seen_topic_fact = set()
@@ -77,6 +95,9 @@ def filter_out_similar_questions(questions: list[dict[str, Any]]) -> list[dict[s
 
 
 def validate_quiz_schema(obj: dict[str, Any], expected_count: int | None = None) -> str | None:
+    # Det vigtigste struktur-tjek.
+    # Her tjekker vi, om LLM'ens JSON ligner det frontend og backend forventer:
+    # questions-liste, id, type, question, options, answer_index osv.
     if not isinstance(obj, dict):
         return "JSON er ikke et objekt."
 
@@ -107,9 +128,12 @@ def validate_quiz_schema(obj: dict[str, Any], expected_count: int | None = None)
             return "Et spørgsmål er for kort."
 
         if not isinstance(q["options"], list) or len(q["options"]) != 3:
+            # Multiple choice i dette system skal altid have præcis 3 svar.
             return "MCQ skal have præcis 3 svarmuligheder."
 
         if q["answer_index"] not in [0, 1, 2]:
+            # answer_index peger på det korrekte svar.
+            # 0 = første svar, 1 = andet svar, 2 = tredje svar.
             return "answer_index skal være 0, 1 eller 2."
 
         option_norms = [norm_ws(str(o)).lower() for o in q["options"]]
@@ -125,12 +149,18 @@ def validate_quiz_schema(obj: dict[str, Any], expected_count: int | None = None)
 
         correct_option = norm_ws(str(q["options"][q["answer_index"]]))
         if correct_option.lower() != correct_answer.lower():
+            # Hvis answer_index peger på "Koldt vand", men correct_answer siger
+            # "Lunkent vand", ved systemet ikke hvad der er rigtigt. Så afvises
+            # spørgsmålet.
             return "Den korrekte svarmulighed matcher ikke correct_answer."
 
     return None
 
 
 def validate_mcq_quality(obj: dict[str, Any]) -> str | None:
+    # Ekstra MCQ-kvalitetstjek.
+    # Her fanger vi fx dubletter, ens svarmuligheder og standardsvar som
+    # "Alle ovenstående", fordi de gør quizzen dårligere.
     questions = obj.get("questions", [])
     if not isinstance(questions, list):
         return "questions er ikke en liste."

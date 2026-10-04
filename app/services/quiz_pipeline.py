@@ -9,6 +9,11 @@ Generator til quiz-forslag fra PDF:
 - validerer JSON og kvalitet
 - review-step forbedrer spørgsmålene
 - regenererer enkeltspørgsmål ud fra facts
+
+Børnevenlig eksamensforklaring:
+Denne fil er selve "maskinrummet". FastAPI-ruterne sender PDF og lærerens valg
+hertil. Pipelinen læser PDF'en, laver/bygger prompts, sender dem til Ollama,
+parser JSON, rydder op i spørgsmålene og validerer dem, før frontend ser dem.
 """
 
 import json
@@ -49,15 +54,37 @@ from app.services.quiz_validation import (
     validate_source_pages,
 )
 
+# OCR: Tesseract skal være installeret på computeren.
+# PDF-sider laves om til billeder med pdfplumber (som allerede er installeret),
+# så Poppler/pdf2image ikke længere er nødvendigt.
+# På Windows lægger Tesseract-installeren sig typisk i Program Files uden at
+# komme på PATH, så vi peger direkte på den, hvis den findes der.
+# Stien kan også sættes med miljøvariablen TESSERACT_CMD.
 try:
+    import os
+    import shutil
     import pytesseract
-    from pdf2image import convert_from_bytes
+
+    _tesseract_cmd = os.environ.get("TESSERACT_CMD")
+    if not _tesseract_cmd and not shutil.which("tesseract"):
+        for _candidate in (
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        ):
+            if os.path.exists(_candidate):
+                _tesseract_cmd = _candidate
+                break
+    if _tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = _tesseract_cmd
+
+    pytesseract.get_tesseract_version()
     OCR_AVAILABLE = True
 except Exception:
     OCR_AVAILABLE = False
+    print("Advarsel: Tesseract blev ikke fundet. OCR er slået fra.")
 
 
-OLLAMA_HOST = "http://localhost:11434"
+OLLAMA_HOST = "http://127.0.0.1:11434"
 OLLAMA_CHAT_URL = f"{OLLAMA_HOST}/api/chat"
 OLLAMA_GENERATE_URL = f"{OLLAMA_HOST}/api/generate"
 OLLAMA_TAGS_URL = f"{OLLAMA_HOST}/api/tags"
@@ -65,6 +92,9 @@ OLLAMA_TAGS_URL = f"{OLLAMA_HOST}/api/tags"
 
 @dataclass
 class OCRParams:
+    # OCRParams styrer OCR-delen.
+    # OCR betyder, at systemet prøver at læse tekst fra en PDF-side som et billede.
+    # Det bruges kun som hjælp, når almindelig PDF-tekst ikke er nok.
     use_ocr: bool = True
     max_pages: int = 6
     dpi: int = 130
@@ -73,6 +103,9 @@ class OCRParams:
 
 @dataclass
 class QuizGenParams:
+    # QuizGenParams er en samlet "indstillingspose" for quizgenerering.
+    # Her ligger både lærerens valg (antal spørgsmål, age_group, page range)
+    # og tekniske valg (model, temperature, timeout, OCR).
     model: str = "qwen2.5:7b-instruct"
     num_questions: int = 10
     age_group: str = "B"
@@ -87,6 +120,9 @@ class QuizGenParams:
     num_ctx: int = 3072
     num_predict: int = 800
     run_final_review: bool = False
+    # Hvis use_fact_pipeline sættes til True, kører systemet fact-flowet:
+    # PDF-tekst -> structured facts -> Main Question Generation Prompt -> quiz.
+    # Hvis den er False, bruges direct/supplement-flowet.
     use_fact_pipeline: bool = False
 
     ocr: OCRParams = field(default_factory=OCRParams)
@@ -94,6 +130,8 @@ class QuizGenParams:
 
 @dataclass
 class QuizGenDebug:
+    # Debug-info sendes tilbage til frontend, så man kan se fx om OCR blev brugt,
+    # hvor lang tid modellen tog, og hvor mange tegn der blev udtrukket.
     extracted_chars: int
     used_ocr: bool
     material_preview: str
@@ -111,6 +149,9 @@ def extract_text_pdfplumber(
     page_to: Optional[int] = None,
     max_pages: int = 120,
 ) -> str:
+    # Almindelig PDF-tekstudtrækning.
+    # Først prøver vi at læse tekst direkte fra PDF'en. Hvis PDF'en indeholder
+    # rigtig tekst, er dette hurtigere og renere end OCR.
     out: List[str] = []
 
     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
@@ -139,6 +180,9 @@ def extract_text_ocr(
     dpi: int = 130,
     lang: str = "dan",
 ) -> str:
+    # OCR-tekstudtrækning.
+    # Her laves PDF-sider om til billeder, og Tesseract prøver at læse teksten.
+    # Det er nyttigt for billedtunge slides, men kan være langsommere og mere støjende.
     if not OCR_AVAILABLE:
         return ""
 
@@ -148,23 +192,22 @@ def extract_text_ocr(
     if start > end:
         return ""
 
-    images = convert_from_bytes(
-        pdf_bytes,
-        dpi=dpi,
-        first_page=start,
-        last_page=end,
-    )
-
     parts: List[str] = []
-    for idx, img in enumerate(images, start=start):
-        txt = (pytesseract.image_to_string(img, lang=lang) or "").strip()
-        if txt:
-            parts.append(f"[OCR Side {idx}]\n{txt}")
+    with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+        end = min(end, len(pdf.pages))
+        for idx in range(start, end + 1):
+            img = pdf.pages[idx - 1].to_image(resolution=dpi).original
+            txt = (pytesseract.image_to_string(img, lang=lang) or "").strip()
+            if txt:
+                parts.append(f"[OCR Side {idx}]\n{txt}")
 
     return "\n\n".join(parts)
 
 
 def safe_json_loads(s: str) -> Optional[Dict[str, Any]]:
+    # LLM'en svarer teknisk set med tekst, også når vi beder om JSON.
+    # Denne funktion prøver forsigtigt at læse tekstsvaret som JSON.
+    # Den forsøger også at fjerne markdown-hegn og finde JSON inde i svaret.
     s = (s or "").strip()
     if not s:
         return None
@@ -323,7 +366,7 @@ def normalize_facts_obj(obj: Dict[str, Any]) -> Dict[str, Any]:
     return {"facts": normalized}
 
 
-def normalize_quiz_obj(obj: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_quiz_obj(obj: Dict[str, Any], filter_similar: bool = True) -> Dict[str, Any]:
     if not isinstance(obj, dict):
         return obj
 
@@ -360,7 +403,8 @@ def normalize_quiz_obj(obj: Dict[str, Any]) -> Dict[str, Any]:
         if item["difficulty"] not in {"easy", "medium", "hard"}:
             item["difficulty"] = "medium"
 
-        if item["origin"] not in {"example", "generated"}:
+        # "teacher" betyder, at læreren selv har skrevet eller rettet spørgsmålet.
+        if item["origin"] not in {"example", "generated", "teacher"}:
             item["origin"] = "generated"
 
         try:
@@ -421,7 +465,9 @@ def normalize_quiz_obj(obj: Dict[str, Any]) -> Dict[str, Any]:
         item["correct_answer"] = correct_answer
         normalized_questions.append(item)
 
-    obj["questions"] = filter_out_similar_questions(normalized_questions)
+    obj["questions"] = (
+        filter_out_similar_questions(normalized_questions) if filter_similar else normalized_questions
+    )
     return obj
 
 
@@ -1333,6 +1379,8 @@ def clean_modal_verbs_from_material(obj: Dict[str, Any], source_material: str | 
 
 
 def renumber_questions(questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    # Giver spørgsmålene nye id'er fra 1 og opefter.
+    # Det er praktisk efter filtrering/shuffling, så frontend får en ren rækkefølge.
     out = []
     for idx, q in enumerate(questions, start=1):
         item = dict(q)
@@ -1349,12 +1397,19 @@ def ollama_chat(
     num_ctx: int = 4096,
     num_predict: int = 1200,
 ) -> str:
+    # Her taler backend med Ollama.
+    # Ollama er ikke FastAPI; Ollama er det lokale program, der kører Qwen-modellen.
+    # Vi sender modelnavn, messages og options til Ollamas lokale API.
+    # "format": "json" beder Ollama/modellen om at svare i JSON-format.
     chat_payload = {
         "model": model,
         "messages": messages,
         "stream": False,
         "format": "json",
         "options": {
+            # Lav temperature giver mere stabilt og regelstyret output.
+            # Det er godt her, fordi vi hellere vil have korrekt JSON og klare
+            # spørgsmål end kreativ variation.
             "temperature": temperature,
             "num_ctx": num_ctx,
             "num_predict": num_predict,
@@ -1370,6 +1425,8 @@ def ollama_chat(
             "Prøv færre genererede ekstra-spørgsmål eller et mindre sideinterval."
         ) from e
     if response.status_code == 404:
+        # Nogle Ollama-versioner bruger /api/generate i stedet for /api/chat.
+        # Derfor har vi en fallback, hvor messages laves om til én samlet prompt.
         body = response.text.strip()
         if "model" in body.lower() and ("not found" in body.lower() or "pull" in body.lower()):
             raise RuntimeError(
@@ -1417,6 +1474,8 @@ def ollama_chat(
 
 
 def stop_ollama_model(model: str) -> None:
+    # Hvis modellen hænger eller bruger for lang tid, prøver vi at stoppe den.
+    # Det er en praktisk sikkerhed, så backend ikke bare venter for evigt.
     try:
         subprocess.run(
             ["ollama", "stop", model],
@@ -1430,6 +1489,9 @@ def stop_ollama_model(model: str) -> None:
 
 
 def extract_material_from_pdf(pdf_bytes: bytes, params: QuizGenParams) -> Tuple[str, bool]:
+    # Gør PDF'en om til tekst, som LLM'en kan bruge.
+    # LLM'en får ikke selve PDF-filen direkte. Den får en tekststreng med
+    # sidemarkører som [Side 4] eller [OCR Side 18].
     material_parts: List[str] = []
     pages_needing_ocr: List[int] = []
 
@@ -1449,11 +1511,16 @@ def extract_material_from_pdf(pdf_bytes: bytes, params: QuizGenParams) -> Tuple[
             clean_text = norm_ws(text)
 
             if len(clean_text) >= 80:
+                # Siden har nok almindelig PDF-tekst, så vi bruger den direkte.
                 material_parts.append(f"[Side {i}]\n{text}")
             elif 15 <= len(clean_text) < 80:
+                # Siden har lidt tekst. Vi gemmer det, vi fandt, men markerer
+                # også siden til OCR, fordi OCR måske kan finde mere.
                 material_parts.append(f"[Side {i}]\n{text}")
                 pages_needing_ocr.append(i)
             else:
+                # Siden har næsten ingen tekst. Hvis OCR er tilladt, prøver vi
+                # at læse siden som billede.
                 pages_needing_ocr.append(i)
 
     used_ocr = False
@@ -1461,6 +1528,10 @@ def extract_material_from_pdf(pdf_bytes: bytes, params: QuizGenParams) -> Tuple[
     pages_needing_ocr = pages_needing_ocr[:max_ocr_pages]
 
     if params.ocr.use_ocr and OCR_AVAILABLE and pages_needing_ocr:
+        # OCR køres kun hvis:
+        # 1) OCR er tilladt for sideintervallet,
+        # 2) OCR-bibliotekerne findes,
+        # 3) der faktisk er sider med for lidt tekst.
         for page_no in pages_needing_ocr:
             try:
                 try:
@@ -1486,6 +1557,7 @@ def extract_material_from_pdf(pdf_bytes: bytes, params: QuizGenParams) -> Tuple[
 
                 ocr_clean = norm_ws(ocr_text)
                 if len(ocr_clean) < 30:
+                    # Hvis OCR kun finder næsten ingenting, bruger vi ikke teksten.
                     continue
 
                 material_parts.append(f"[OCR Side {page_no}]\n{ocr_text}")
@@ -1503,6 +1575,10 @@ def extract_material_from_pdf(pdf_bytes: bytes, params: QuizGenParams) -> Tuple[
 
 
 def extract_facts_from_material(material: str, params: QuizGenParams, max_facts: int = 20) -> Dict[str, Any]:
+    # Fact extraction:
+    # Her beder vi modellen lave små strukturerede facts ud fra PDF-teksten.
+    # Facts bruges som kontrolleret mellemformat: først PDF -> facts, derefter
+    # facts -> quizspørgsmål. Det reducerer risikoen for, at modellen digter frit.
     minimum_usable_facts = min(max(params.num_questions, 5), max_facts)
     fact_token_budget = min(2600, max(1800, max_facts * 180))
 
@@ -1523,11 +1599,15 @@ def extract_facts_from_material(material: str, params: QuizGenParams, max_facts:
 
     facts_obj = safe_json_loads(facts_output)
     if not facts_obj:
+        # Hvis hele JSON'en ikke kan parses, prøver vi at redde enkelte fact-items
+        # ud af teksten. Det kaldes salvage.
         salvaged_facts = salvage_json_array_items(facts_output, "facts")
         if len(salvaged_facts) >= minimum_usable_facts:
             facts_obj = {"facts": salvaged_facts[:max_facts]}
 
     if not facts_obj:
+        # Hvis første forsøg fejler, bruger vi en repair-prompt.
+        # Det er stadig LLM'en, men nu får den besked på kun at rette formatet.
         repaired_facts_output = ollama_chat(
             model=params.model,
             messages=[
@@ -1578,6 +1658,8 @@ def extract_facts_from_material(material: str, params: QuizGenParams, max_facts:
                 raise RuntimeError(f"Kunne ikke parse facts-JSON fra modellen. Første del af svaret var: {preview}")
 
     facts_obj = normalize_facts_obj(facts_obj)
+    # Normalisering betyder: ryd op i felter, giv facts ens struktur, fjern
+    # tomme eller dublerede facts og sørg for at source_page er et tal.
     facts = facts_obj.get("facts", [])
 
     if not facts:
@@ -1599,6 +1681,9 @@ def run_review_step(
     expected_count: int,
     facts_obj: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
+    # Review step:
+    # Her bruges modellen som kvalitetslæser. Den kan tjekke blødere ting som
+    # sprog, grounding og variation. Men bagefter validerer Python stadig output.
     reviewed_output = ollama_chat(
         model=params.model,
         messages=[
@@ -1624,6 +1709,7 @@ def run_review_step(
 
 
 def validate_basic_quiz(obj: Optional[Dict[str, Any]]) -> str | None:
+    # Basistjek: kan JSON parses, ligner det en quiz, og er sproget ok?
     err = validate_quiz_schema(obj) if obj else "Kunne ikke parse JSON."
     if not err and obj:
         err = validate_mcq_quality(obj)
@@ -1633,6 +1719,8 @@ def validate_basic_quiz(obj: Optional[Dict[str, Any]]) -> str | None:
 
 
 def validate_generated_quiz(obj: Optional[Dict[str, Any]], params: QuizGenParams) -> str | None:
+    # Det samlede valideringstjek for genererede spørgsmål.
+    # Det tjekker både struktur, sideinterval, aldersniveau, svarform og dubletter.
     err = validate_basic_quiz(obj)
     if not err and obj:
         err = validate_source_pages(obj, params.page_from, params.page_to)
@@ -2665,12 +2753,18 @@ def generate_quiz_candidates_direct(
     params: QuizGenParams,
     n_candidates: int,
 ) -> Tuple[Dict[str, Any], QuizGenDebug]:
+    # Direct/supplement-flow:
+    # Dette flow bruger relevante eksempelspørgsmål, og hvis der mangler flere,
+    # beder det modellen generere ekstra spørgsmål direkte fra PDF-materialet.
+    # Det er stadig kontrolleret med prompts, JSON, validering og teacher review.
     example_obj = examples_to_quiz_obj(params)
     example_err = validate_quiz_schema(example_obj) if usable_question_count(example_obj) else None
     if example_err:
         example_obj = {"quiz_title": "Spørgsmålsforslag", "questions": []}
 
     if usable_question_count(example_obj) >= params.num_questions:
+        # Hvis de faste eksempelspørgsmål allerede dækker behovet, kan systemet
+        # returnere dem uden at kalde LLM'en.
         obj = trim_quiz_to_count(example_obj, params.num_questions)
         page_range = f"{params.page_from or 1}-{params.page_to or 'sidste'}"
         debug = QuizGenDebug(
@@ -2688,6 +2782,8 @@ def generate_quiz_candidates_direct(
 
     start_time = time.time()
     if usable_question_count(example_obj) > 0:
+        # Hvis vi har nogle eksempler, men ikke nok, supplerer modellen kun med
+        # de manglende spørgsmål.
         missing_count = params.num_questions - usable_question_count(example_obj)
         supplemented_obj = supplement_direct_questions(material, params, example_obj, missing_count)
         latency = time.time() - start_time
@@ -2735,6 +2831,8 @@ def generate_quiz_candidates_direct(
     token_budget = min(max(params.num_predict, generated_target * 230), 2200)
 
     model_output = ollama_chat(
+        # Hvis der ikke er nok eksempler, kaldes LLM'en med direct prompten.
+        # Den får materialet, aldersprofil, eksempler, keywords og JSON-regler.
         model=params.model,
         messages=[
             {"role": "system", "content": "Svar kun med gyldig JSON. Skriv alt på dansk."},
@@ -2759,17 +2857,23 @@ def generate_quiz_candidates_direct(
 
     obj = quiz_obj_from_output(model_output)
     if obj:
+        # LLM-output er tekst. Først parser vi det som JSON, så normaliserer vi
+        # felterne og blander rækkefølgen.
         obj = normalize_quiz_obj(obj)
         obj = shuffle_questions(obj)
 
     err = validate_generated_quiz(obj, params)
     if err:
+        # Hvis outputtet ikke kan godkendes, prøver vi først at filtrere de
+        # enkelte spørgsmål og beholde dem, der faktisk er brugbare.
         filtered_obj = filter_valid_generated_questions(obj, params, example_obj)
         if usable_question_count(filtered_obj) > 0:
             obj = filtered_obj
             err = None
 
     if err:
+        # Hvis filtrering ikke er nok, bruges repair-prompten.
+        # Den beder LLM'en rette outputtet til gyldigt quiz-JSON.
         did_repair = True
         repaired_output = ollama_chat(
             model=params.model,
@@ -2852,6 +2956,10 @@ def generate_quiz_candidates_from_pdf(
     pdf_bytes: bytes,
     params: QuizGenParams,
 ) -> Tuple[Dict[str, Any], QuizGenDebug]:
+    # Hovedindgangen til quiz-pipelinen.
+    # FastAPI sender PDF-bytes og QuizGenParams hertil.
+    # Funktionen tjekker Ollama, udtrækker materiale fra PDF'en og vælger derefter
+    # mellem direct-flow og fact-flow.
     try:
         requests.get(OLLAMA_TAGS_URL, timeout=3).raise_for_status()
     except Exception as e:
@@ -2861,6 +2969,7 @@ def generate_quiz_candidates_from_pdf(
     n_candidates = candidate_count(params.num_questions)
 
     if not params.use_fact_pipeline:
+        # Hvis fact-pipelinen ikke er slået til, bruges direct/supplement-flowet.
         return generate_quiz_candidates_direct(
             material=material,
             used_ocr=used_ocr,
@@ -2872,10 +2981,16 @@ def generate_quiz_candidates_from_pdf(
     generation_token_budget = min(params.num_predict, max(900, n_candidates * 170))
 
     facts_obj = extract_facts_from_material(material, params, max_facts=max_facts)
+    # Hvis fact-pipelinen er slået til:
+    # 1) udtræk facts,
+    # 2) giv facts til Main Question Generation Prompt,
+    # 3) generer spørgsmål ud fra facts.
     facts = facts_obj.get("facts", [])
 
     start_time = time.time()
     model_output = ollama_chat(
+        # Her sendes Main Question Generation Prompt til Ollama/Qwen.
+        # Prompten indeholder facts_json, aldersprofil, eksempler og regler.
         model=params.model,
         messages=[
             {"role": "system", "content": "Svar kun med gyldig JSON. Skriv alt på dansk."},
@@ -2905,6 +3020,8 @@ def generate_quiz_candidates_from_pdf(
         obj = shuffle_questions(obj)
 
     err = validate_quiz_schema(obj) if obj else "Kunne ikke parse JSON."
+    # I fact-flowet tjekkes også, at svarene faktisk passer med de facts, som
+    # blev sendt ind i prompten.
     if not err and obj:
         err = validate_mcq_quality(obj)
     if not err and obj:
@@ -2913,6 +3030,8 @@ def generate_quiz_candidates_from_pdf(
         err = validate_danish_language_quality(obj)
 
     if err:
+        # Hvis fact-flowets første output fejler, prøver systemet repair/review
+        # og eventuelt en ny generation.
         did_repair = True
 
         repaired_output = ollama_chat(
@@ -3001,6 +3120,8 @@ def generate_quiz_candidates_from_pdf(
             obj = obj2
 
     if params.run_final_review:
+        # Valgfrit ekstra review-step. Det er slået fra som standard, men kan
+        # bruges hvis man vil have modellen til at kvalitetstjekke hele quizzen.
         reviewed_obj = run_review_step(obj, material, params, params.num_questions, facts_obj=facts_obj)
         if reviewed_obj:
             review_err = validate_quiz_schema(reviewed_obj)
@@ -3039,6 +3160,9 @@ def regenerate_single_question_from_pdf(
     old_question: Dict[str, Any],
     existing_questions: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    # Regenererer ét enkelt spørgsmål.
+    # Bruges når læreren vil have et nyt forslag i stedet for et gammelt.
+    # Her bruges facts, så det nye spørgsmål stadig kan bindes til materialet.
     try:
         requests.get(OLLAMA_TAGS_URL, timeout=3).raise_for_status()
     except Exception as e:
@@ -3114,6 +3238,9 @@ def finalize_selected_questions(
     selected_questions: List[Dict[str, Any]],
     quiz_title: str = "Valgt quiz",
 ) -> Dict[str, Any]:
+    # Finalisering:
+    # Læreren har valgt de spørgsmål, der skal med. Backend nummererer dem,
+    # normaliserer dem og validerer dem en sidste gang, før de bliver final quiz.
     if not selected_questions:
         raise ValueError("Ingen valgte spørgsmål")
 
@@ -3122,18 +3249,26 @@ def finalize_selected_questions(
         "questions": renumber_questions(selected_questions),
     }
 
-    quiz_obj = normalize_quiz_obj(quiz_obj)
+    # Læreren har selv valgt spørgsmålene, så de må ikke stille forsvinde her
+    # fordi de ligner hinanden.
+    quiz_obj = normalize_quiz_obj(quiz_obj, filter_similar=False)
 
     err = validate_quiz_schema(quiz_obj)
     if err:
         raise ValueError(f"Valgte spørgsmål er ugyldige: {err}")
 
-    err2 = validate_mcq_quality(quiz_obj)
-    if err2:
-        raise ValueError(f"Valgte spørgsmål har kvalitetsfejl: {err2}")
+    # Kvalitets- og sprogtjekkene er lavet til at fange LLM'ens fejl.
+    # Spørgsmål, læreren selv har skrevet eller rettet, stoler vi på.
+    model_questions = [q for q in quiz_obj["questions"] if q.get("origin") != "teacher"]
+    if model_questions:
+        model_obj = {"quiz_title": quiz_obj["quiz_title"], "questions": model_questions}
 
-    err3 = validate_danish_language_quality(quiz_obj)
-    if err3:
-        raise ValueError(f"Valgte spørgsmål har sproglige kvalitetsfejl: {err3}")
+        err2 = validate_mcq_quality(model_obj)
+        if err2:
+            raise ValueError(f"Valgte spørgsmål har kvalitetsfejl: {err2}")
+
+        err3 = validate_danish_language_quality(model_obj)
+        if err3:
+            raise ValueError(f"Valgte spørgsmål har sproglige kvalitetsfejl: {err3}")
 
     return quiz_obj

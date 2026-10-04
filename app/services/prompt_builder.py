@@ -1,4 +1,14 @@
 # app/services/prompt_builder.py
+#
+# Børnevenlig eksamensforklaring:
+# Denne fil bygger de tekster, som sendes til LLM'en. De tekster kaldes prompts.
+# En prompt er som en meget præcis opgavebeskrivelse til modellen:
+# "Brug dette materiale, skriv dansk, lav JSON, lav 3 svarmuligheder".
+#
+# Vigtigt:
+# - Python bygger prompten.
+# - Ollama/Qwen svarer på prompten.
+# - Backend parser og validerer svaret bagefter.
 
 import json
 from app.services.prompt_examples import get_examples_for_page_range, get_keywords_for_page_range
@@ -6,10 +16,15 @@ from app.services.prompt_profiles import get_profile
 
 
 def _bullets(items: list[str]) -> str:
+    # Gør en liste fra Python om til punktopstilling i prompten.
+    # Eksempel: ["Brug korte spørgsmål"] bliver til "- Brug korte spørgsmål".
     return "\n".join(f"- {item}" for item in items)
 
 
 def _style_examples(age_group: str, page_from: int | None = None, page_to: int | None = None) -> str:
+    # Henter eksempelspørgsmål for den valgte alder og de valgte sider.
+    # De sættes ind i prompten, så modellen kan se stil og niveau.
+    # Eksemplerne må guide modellen, men må ikke kopieres.
     lines = []
     examples = get_examples_for_page_range(age_group, page_from, page_to)
     if not examples:
@@ -30,6 +45,9 @@ def _short_style_examples(
     page_to: int | None = None,
     limit: int = 4,
 ) -> str:
+    # En kortere version af eksempelspørgsmålene.
+    # Bruges når prompten ikke må blive for lang, men modellen stadig skal
+    # have et par eksempler på stil, emner og sværhedsgrad.
     lines = []
     examples = get_examples_for_page_range(age_group, page_from, page_to)[:limit]
     if not examples:
@@ -44,6 +62,8 @@ def _short_style_examples(
 
 
 def _compact_style_examples(age_group: str, page_from: int | None = None, page_to: int | None = None) -> str:
+    # Den mest kompakte eksempel-version: kun side og emne/korrekt svar.
+    # Bruges når vi vil give modellen meget lidt, men stadig lidt retning.
     lines = []
     examples = get_examples_for_page_range(age_group, page_from, page_to)
     if not examples:
@@ -57,6 +77,10 @@ def _compact_style_examples(age_group: str, page_from: int | None = None, page_t
 
 
 def _keywords(age_group: str, page_from: int | None = None, page_to: int | None = None) -> str:
+    # Keywords kommer fra de relevante eksempelspørgsmål.
+    # De kommer altså ikke direkte fra PDF'en.
+    # De hjælper modellen med emnevalg og ordvalg, men PDF'en er stadig kilden
+    # til de faktiske korrekte svar.
     keywords = get_keywords_for_page_range(age_group, page_from, page_to)
     if not keywords:
         return "Ingen nøgleord fra eksempler for det valgte sideinterval."
@@ -64,6 +88,10 @@ def _keywords(age_group: str, page_from: int | None = None, page_to: int | None 
 
 
 def build_fact_extraction_prompt(material: str, params, max_facts: int = 18) -> str:
+    # Første fact-prompt:
+    # Her beder vi LLM'en læse PDF-teksten og lave små, strukturerede facts.
+    # Et fact er et mellemtrin mellem PDF-materiale og quizspørgsmål.
+    # Det kan fx indeholde source_page, topic, fact og correct_answer.
     profile = get_profile(params.age_group)
     min_facts = min(max(5, getattr(params, "num_questions", 5)), max_facts)
 
@@ -116,6 +144,9 @@ Materiale:
 
 
 def build_fact_repair_prompt(model_output: str, max_facts: int = 18) -> str:
+    # Hvis facts-outputtet fra modellen ikke er gyldig JSON, kan denne prompt
+    # bede modellen rydde op i sit svar. Den må ikke opfinde nye facts, men skal
+    # prøve at returnere samme indhold i korrekt JSON-format.
     min_facts = min(8, max_facts)
 
     return f"""
@@ -154,7 +185,13 @@ Output der skal rettes:
 
 
 def build_question_generation_prompt(material: str, facts_obj: dict, params, n_candidates: int) -> str:
+    # Main Question Generation Prompt:
+    # Dette er den fact-baserede prompt. Den får structured facts, age profile,
+    # eksempler og keywords. Modellen bliver bedt om at lave spørgsmål ud fra
+    # én fact ad gangen, og correct_answer skal komme fra fact'et.
     profile = get_profile(params.age_group)
+    # ensure_ascii=False betyder, at danske tegn som æ, ø og å forbliver læsbare
+    # i JSON-teksten i stedet for at blive lavet om til unicode-koder.
     facts_json = json.dumps(facts_obj, ensure_ascii=False, indent=2)
     examples = _short_style_examples(params.age_group, params.page_from, params.page_to)
     keywords = _keywords(params.age_group, params.page_from, params.page_to)
@@ -265,6 +302,10 @@ Facts:
 
 
 def build_direct_question_generation_prompt(material: str, params, n_candidates: int) -> str:
+    # Direct Question Generation Prompt:
+    # Denne prompt laver spørgsmål direkte ud fra materialet uden først at give
+    # modellen en facts-liste. Den er stadig kontrolleret med age profile,
+    # eksempler, keywords, JSON-schema og regler.
     profile = get_profile(params.age_group)
     examples = _short_style_examples(params.age_group, params.page_from, params.page_to)
     keywords = _keywords(params.age_group, params.page_from, params.page_to)
@@ -359,6 +400,10 @@ def build_direct_supplement_prompt(
     existing_questions: list[dict],
     rejection_notes: list[str] | None = None,
 ) -> str:
+    # Supplement prompt:
+    # Bruges når systemet allerede har nogle spørgsmål, men mangler flere.
+    # Den får eksisterende spørgsmål og brugte svar, så modellen ikke bare
+    # gentager noget, læreren allerede har fået.
     profile = get_profile(params.age_group)
     existing_summary = [str(question.get("question", "")) for question in existing_questions]
     used_answers = [
@@ -473,6 +518,10 @@ def build_guided_single_supplement_prompt(
     rejection_notes: list[str] | None = None,
     question_count: int = 1,
 ) -> str:
+    # Guided single supplement:
+    # Her får modellen ét eller få konkrete PDF-punkter som focus_point.
+    # Det er som at sige: "Lav et spørgsmål ud fra netop denne lille tekstbid".
+    # Læreren vælger ikke disse punkter manuelt; backend finder dem.
     profile = get_profile(params.age_group)
     examples = _short_style_examples(params.age_group, params.page_from, params.page_to, limit=2)
     existing_summary = [
@@ -524,6 +573,10 @@ Schema:
 
 
 def build_direct_repair_prompt(quiz_obj: dict | None, raw_output: str, material: str, params, expected_count: int) -> str:
+    # Repair prompt:
+    # Hvis modellen har lavet dårligt eller forkert JSON-output, får den her
+    # besked på at rette quizzen og beholde schemaet. Det er LLM-baseret repair,
+    # mens validation er almindelig Python-kode.
     profile = get_profile(params.age_group)
     quiz_json = json.dumps(quiz_obj, ensure_ascii=False, indent=2) if quiz_obj else raw_output
     examples = _style_examples(params.age_group, params.page_from, params.page_to)
@@ -566,6 +619,10 @@ Materiale:
 
 
 def build_review_prompt(quiz_obj: dict, material: str, params, expected_count: int, facts_obj: dict | None = None) -> str:
+    # Review prompt:
+    # Her bruges LLM'en som kvalitetskontrol. Den tjekker blødere ting som
+    # naturligt dansk, aldersniveau, grounding og om forkerte svar faktisk er
+    # plausible men forkerte. Det erstatter stadig ikke lærerens review.
     profile = get_profile(params.age_group)
     quiz_json = json.dumps(quiz_obj, ensure_ascii=False, indent=2)
     facts_json = json.dumps(facts_obj or {}, ensure_ascii=False, indent=2)

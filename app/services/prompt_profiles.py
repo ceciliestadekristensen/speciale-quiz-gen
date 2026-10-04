@@ -1,6 +1,15 @@
 # app/services/prompt_profiles.py
+#
+# Børnevenlig eksamensforklaring:
+# Denne fil er "alders-profilerne". Det er ikke en ny model og ikke træning.
+# Det er faste tekst-regler i Python, som senere bliver sat ind i prompts.
+# Python vælger fx profil A, B, C eller UNG, og LLM'en får derefter at vide:
+# "Skriv meget enkelt" eller "du må gerne bruge mere fagligt sprog".
 
 AGE_GROUP_PROFILES = {
+    # Hver nøgle ("A", "B", "C", "UNG") er en aldersgruppe.
+    # Hver profil indeholder de instruktioner, der skal hjælpe modellen med
+    # at skrive spørgsmål på et passende niveau.
     "A": {
         "label": "6-8 år",
         "material_hint": "meget enkel og visuel astmaundervisning",
@@ -111,4 +120,7 @@ AGE_GROUP_PROFILES = {
 
 
 def get_profile(age_group: str) -> dict:
+    # Henter den rigtige aldersprofil.
+    # Hvis noget går galt, bruger vi B som sikker standard, fordi den ligger
+    # midt mellem de yngste og ældste grupper.
     return AGE_GROUP_PROFILES.get(age_group.upper(), AGE_GROUP_PROFILES["B"])

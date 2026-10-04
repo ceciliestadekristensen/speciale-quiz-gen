@@ -1,0 +1,40 @@
+QUIZGEN - KORT VEJLEDNING
+=========================
+
+Installation på Windows (gøres én gang, evt. af IT)
+---------------------------------------------------
+1. Installer Python 3.10 eller nyere fra python.org
+   (sæt flueben i "Add Python to PATH").
+2. Installer Ollama fra ollama.com.
+3. Installer Tesseract OCR til Windows. Vælg den danske sprogpakke
+   ("Danish") under installationen.
+4. Dobbeltklik på installer.bat i QuizGen-mappen og vent, til den er færdig.
+   Der kommer en genvej "QuizGen" på skrivebordet.
+
+Installation på Mac (gøres én gang, evt. af IT)
+-----------------------------------------------
+1. Installer Python 3.10 eller nyere fra python.org.
+2. Installer Ollama fra ollama.com og åbn programmet én gang.
+3. Installer Tesseract med dansk sprogpakke via Homebrew (brew.sh):
+       brew install tesseract tesseract-lang
+4. Dobbeltklik på installer.command i QuizGen-mappen og vent, til den er færdig.
+   Der kommer en genvej "QuizGen" på skrivebordet.
+
+   Hvis Mac'en siger, at filen ikke kan åbnes, fordi den ikke kan bekræftes:
+   Åbn Terminal og kør denne kommando (træk QuizGen-mappen ind i vinduet
+   i stedet for at skrive stien):
+       xattr -dr com.apple.quarantine STI/TIL/QuizGen-mappen
+   Dobbeltklik derefter på installer.command igen.
+
+Brug
+----
+1. Dobbeltklik på "QuizGen" på skrivebordet.
+2. Et vindue med tekst åbner, og efter lidt tid åbner QuizGen i browseren.
+3. Luk tekstvinduet, når du er færdig. Så stopper QuizGen.
+
+Godt at vide
+------------
+- Alt kører på denne computer. Intet sendes ud på internettet.
+- Det kan tage nogle minutter at lave en quiz. Det er normalt.
+- Uploadede PDF'er slettes automatisk efter et døgn.
+- Hvis noget går galt, så tag et billede af tekstvinduet og send det til Cecilie.

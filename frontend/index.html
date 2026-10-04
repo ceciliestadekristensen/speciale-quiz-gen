@@ -103,11 +103,6 @@
       line-height: 1.35;
     }
 
-    .answer-letter {
-      min-width: 28px;
-      font-weight: 650;
-    }
-
     .answer-dot {
       width: 18px;
       height: 18px;
@@ -225,6 +220,47 @@
     .hidden {
       display: none;
     }
+
+    .editor {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .editor textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      font: inherit;
+      resize: vertical;
+    }
+
+    .editor-option-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .correct-check {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .correct-check input {
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+    }
+
+    .editor-option-row input[type="text"] {
+      max-width: none;
+      flex: 1;
+    }
   </style>
 </head>
 <body>
@@ -294,6 +330,13 @@
 
     let candidateQuiz = null;
     let selectedQuestionIds = new Set();
+    let editingId = null; // id på spørgsmålet, der redigeres, eller "new" for et nyt
+    let addedQuestionCount = 0;
+
+    // Lærerens egne spørgsmål tæller ikke med i maks., så der kan tilføjes så mange, man vil.
+    function maxSelectable() {
+      return requestedQuestionCount + addedQuestionCount;
+    }
 
     let currentQuiz = null;
     let currentIndex = 0;
@@ -323,28 +366,15 @@
       el("generationPanel").classList.toggle("hidden", !visible);
     }
 
-    function usesColorAnswers() {
-      return generationContext.age_group === "A";
-    }
-
-    function answerMarkerText(index) {
-      if (usesColorAnswers()) {
-        return ["Blå prik", "Grøn prik", "Rød prik"][index] || "";
-      }
-      return ["A)", "B)", "C)"][index] || "";
-    }
-
+    // Alle hold svarer med farvede prikker i stedet for A, B og C.
     function answerMarkerHtml(index) {
-      if (usesColorAnswers()) {
-        const colors = [
-          { name: "Blå", className: "answer-dot-blue" },
-          { name: "Grøn", className: "answer-dot-green" },
-          { name: "Rød", className: "answer-dot-red" }
-        ];
-        const color = colors[index] || colors[0];
-        return `<span class="answer-dot ${color.className}" title="${color.name} prik" aria-label="${color.name} prik"></span>`;
-      }
-      return `<span class="answer-letter">${answerMarkerText(index)}</span>`;
+      const colors = [
+        { name: "Blå", className: "answer-dot-blue" },
+        { name: "Grøn", className: "answer-dot-green" },
+        { name: "Rød", className: "answer-dot-red" }
+      ];
+      const color = colors[index] || colors[0];
+      return `<span class="answer-dot ${color.className}" title="${color.name} prik" aria-label="${color.name} prik"></span>`;
     }
 
     function correctAnswerHtml(q) {
@@ -355,6 +385,14 @@
           <span>${escapeHtml(correct)}</span>
         </span>
       `;
+    }
+
+    function explanationHtml(q) {
+      const explanation = (q.explanation || "").trim();
+      if (!explanation || explanation === "Eksempelspørgsmål baseret på materialet." || explanation === "Forklaring mangler.") {
+        return "";
+      }
+      return `<div class="muted" style="margin-top:6px;">${escapeHtml(explanation)}</div>`;
     }
 
     el("uploadBtn").addEventListener("click", async () => {
@@ -479,57 +517,198 @@
           </label>
         </div>
         <div style="margin-top:12px;">
-          <span class="pill" id="selectedCountPill">Valgt: 0 / maks. ${requestedQuestionCount}</span>
+          <span class="pill" id="selectedCountPill"></span>
         </div>
         <div id="candidateList" style="margin-top:16px;"></div>
         <div class="row" style="margin-top:18px;">
+          <button id="addQuestionBtn">Tilføj eget spørgsmål</button>
           <button id="finalizeBtn" class="primary" disabled>Start quiz med valgte spørgsmål</button>
         </div>
       `;
       root.appendChild(wrapper);
 
-      const list = document.getElementById("candidateList");
+      editingId = null;
+      addedQuestionCount = 0;
+      document.getElementById("addQuestionBtn").addEventListener("click", () => {
+        editingId = "new";
+        renderCandidateList();
+      });
+      document.getElementById("finalizeBtn").addEventListener("click", finalizeSelectedQuiz);
+      renderCandidateList();
+    }
 
-      quiz.questions.forEach((q) => {
+    function candidateHtml(q) {
+      return `
+        <div class="row" style="justify-content:space-between;align-items:flex-start;">
+          <div style="flex:1 1 600px;">
+            ${q.origin === "teacher" ? `<span class="pill" style="margin-bottom:8px;">Skrevet/rettet af dig</span>` : ""}
+            <p style="margin:0 0 10px;font-weight:650;">${escapeHtml(q.question)}</p>
+
+            ${(q.options || []).map((opt, idx) => `
+              <div class="opt answer-option">
+                ${answerMarkerHtml(idx)}
+                <span>${escapeHtml(opt)}</span>
+              </div>
+            `).join("")}
+            <div style="margin-top:10px;"><b>Korrekt svar:</b> ${correctAnswerHtml(q)}</div>
+          </div>
+          <div style="min-width:220px; display:flex; flex-direction:column; gap:8px;">
+            <button class="primary select-btn" data-id="${q.id}">Vælg</button>
+            <button class="edit-btn" data-id="${q.id}" ${editingId !== null ? "disabled" : ""}>Rediger</button>
+          </div>
+        </div>
+      `;
+    }
+
+    // Formular til at rette et spørgsmål eller skrive et nyt (q = null).
+    function questionEditorHtml(q) {
+      const options = q?.options || ["", "", ""];
+      const answerIndex = q ? q.answer_index : null;
+      const explanation = (q?.explanation || "") === "Forklaring mangler." ? "" : (q?.explanation || "");
+      return `
+        <div class="editor">
+          <h3 style="margin:0;">${q ? "Rediger spørgsmål" : "Nyt spørgsmål"}</h3>
+          <label>Spørgsmål
+            <textarea class="edit-question" rows="2" placeholder="Skriv spørgsmålet her">${escapeHtml(q?.question || "")}</textarea>
+          </label>
+          <div class="muted">Skriv de tre svar, og sæt kryds ved det rigtige.</div>
+          ${[0, 1, 2].map((idx) => `
+            <div class="editor-option-row">
+              ${answerMarkerHtml(idx)}
+              <input type="text" class="edit-option" value="${escapeHtml(options[idx] || "")}" placeholder="Svar ${idx + 1}" />
+              <label class="correct-check">
+                <input type="checkbox" class="edit-correct" value="${idx}" ${answerIndex === idx ? "checked" : ""} />
+                Korrekt
+              </label>
+            </div>
+          `).join("")}
+          <label>Forklaring (valgfri, vises når det rigtige svar vises)
+            <textarea class="edit-explanation" rows="2">${escapeHtml(explanation)}</textarea>
+          </label>
+          <div class="bad editor-error"></div>
+          <div class="row">
+            <button class="primary save-edit-btn">Gem</button>
+            <button class="cancel-edit-btn">Annuller</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderCandidateList() {
+      const list = el("candidateList");
+      list.innerHTML = "";
+
+      const addCard = (id, html) => {
         const card = document.createElement("div");
         card.className = "card candidate-card";
-        card.id = `candidate_${q.id}`;
-
-        card.innerHTML = `
-          <div class="row" style="justify-content:space-between;align-items:flex-start;">
-            <div style="flex:1 1 600px;">
-              <p style="margin:0 0 10px;font-weight:650;">${escapeHtml(q.question)}</p>
-
-              ${(q.options || []).map((opt, idx) => `
-                <div class="opt answer-option">
-                  ${answerMarkerHtml(idx)}
-                  <span>${escapeHtml(opt)}</span>
-                </div>
-              `).join("")}
-              <div style="margin-top:10px;"><b>Korrekt svar:</b> ${correctAnswerHtml(q)}</div>
-            </div>
-            <div style="min-width:220px; display:flex; flex-direction:column; gap:8px;">
-              <button class="primary select-btn" data-id="${q.id}">Vælg</button>
-            </div>
-          </div>
-        `;
+        card.id = `candidate_${id}`;
+        card.innerHTML = html;
         list.appendChild(card);
-      });
+      };
 
-      document.querySelectorAll(".select-btn").forEach((btn) => {
+      candidateQuiz.questions.forEach((q) => {
+        addCard(q.id, editingId === q.id ? questionEditorHtml(q) : candidateHtml(q));
+      });
+      if (editingId === "new") {
+        addCard("new", questionEditorHtml(null));
+      }
+
+      list.querySelectorAll(".select-btn").forEach((btn) => {
         btn.addEventListener("click", () => toggleSelectQuestion(Number(btn.dataset.id)));
       });
+      list.querySelectorAll(".edit-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          editingId = Number(btn.dataset.id);
+          renderCandidateList();
+        });
+      });
 
-      document.getElementById("finalizeBtn").addEventListener("click", finalizeSelectedQuiz);
+      const editorCard = list.querySelector(".editor")?.closest(".card");
+      if (editorCard) {
+        editorCard.querySelector(".save-edit-btn").addEventListener("click", () => saveEditor(editorCard));
+        const correctBoxes = editorCard.querySelectorAll(".edit-correct");
+        correctBoxes.forEach((box) => {
+          box.addEventListener("change", () => {
+            if (box.checked) {
+              correctBoxes.forEach((other) => { if (other !== box) other.checked = false; });
+            }
+          });
+        });
+        editorCard.querySelector(".cancel-edit-btn").addEventListener("click", () => {
+          editingId = null;
+          renderCandidateList();
+        });
+        editorCard.scrollIntoView({ behavior: "smooth", block: "center" });
+        editorCard.querySelector(".edit-question").focus({ preventScroll: true });
+      }
+
+      el("addQuestionBtn").disabled = editingId !== null;
       updateSelectionUI();
+    }
+
+    function saveEditor(card) {
+      const question = card.querySelector(".edit-question").value.trim();
+      const options = [...card.querySelectorAll(".edit-option")].map((input) => input.value.trim());
+      const checked = card.querySelector(".edit-correct:checked");
+      const explanation = card.querySelector(".edit-explanation").value.trim();
+      const errorBox = card.querySelector(".editor-error");
+
+      let error = "";
+      if (question.length < 8) {
+        error = "Skriv et spørgsmål (mindst 8 tegn).";
+      } else if (options.some((opt) => !opt)) {
+        error = "Udfyld alle tre svar.";
+      } else if (new Set(options.map((opt) => opt.toLowerCase())).size < 3) {
+        error = "De tre svar skal være forskellige.";
+      } else if (!checked) {
+        error = "Sæt kryds ved det korrekte svar.";
+      }
+      if (error) {
+        errorBox.textContent = error;
+        return;
+      }
+
+      const answerIndex = Number(checked.value);
+      const fields = {
+        question,
+        options,
+        answer_index: answerIndex,
+        correct_answer: options[answerIndex],
+        explanation,
+        origin: "teacher"
+      };
+
+      if (editingId === "new") {
+        const newId = Math.max(0, ...candidateQuiz.questions.map((q) => q.id)) + 1;
+        candidateQuiz.questions.push({
+          id: newId,
+          type: "mcq",
+          topic: "lærerens spørgsmål",
+          list_group: "",
+          difficulty: "medium",
+          source_fact_id: 100000 + newId,
+          source_page: 0,
+          ...fields
+        });
+        addedQuestionCount += 1;
+        selectedQuestionIds.add(newId);
+        setStatus("Dit spørgsmål er tilføjet og valgt.");
+      } else {
+        const q = candidateQuiz.questions.find((item) => item.id === editingId);
+        Object.assign(q, fields);
+        setStatus("Spørgsmålet er gemt.");
+      }
+
+      editingId = null;
+      renderCandidateList();
     }
 
     function toggleSelectQuestion(questionId) {
       if (selectedQuestionIds.has(questionId)) {
         selectedQuestionIds.delete(questionId);
       } else {
-        if (selectedQuestionIds.size >= requestedQuestionCount) {
-          alert(`Du kan vælge maks. ${requestedQuestionCount} spørgsmål.`);
+        if (selectedQuestionIds.size >= maxSelectable()) {
+          alert(`Du kan vælge maks. ${maxSelectable()} spørgsmål.`);
           return;
         }
         selectedQuestionIds.add(questionId);
@@ -540,7 +719,7 @@
     function updateSelectionUI() {
       const pill = document.getElementById("selectedCountPill");
       if (pill) {
-        pill.textContent = `Valgt: ${selectedQuestionIds.size} / maks. ${requestedQuestionCount}`;
+        pill.textContent = `Valgt: ${selectedQuestionIds.size} / maks. ${maxSelectable()}`;
       }
 
       (candidateQuiz?.questions || []).forEach((q) => {
@@ -572,8 +751,8 @@
         return;
       }
 
-      if (selectedQuestions.length > requestedQuestionCount) {
-        alert(`Vælg maks. ${requestedQuestionCount} spørgsmål.`);
+      if (selectedQuestions.length > maxSelectable()) {
+        alert(`Vælg maks. ${maxSelectable()} spørgsmål.`);
         return;
       }
 
@@ -613,7 +792,7 @@
       return `
         <div class="feedback">
           <div style="margin-top:6px;"><b>Korrekt svar:</b> ${correctAnswerHtml(q)}</div>
-          <div class="muted" style="margin-top:6px;">${escapeHtml(q.explanation || "—")}</div>
+          ${explanationHtml(q)}
         </div>
       `;
     }

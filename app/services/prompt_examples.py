@@ -1,5 +1,10 @@
 import re
 
+# Børnevenlig eksamensforklaring:
+# Denne fil indeholder manuelt skrevne eksempelspørgsmål.
+# De er ikke selve PDF-materialet og ikke en prompt alene.
+# De bruges som stilguide: "sådan kan et godt spørgsmål lyde for denne alder".
+# Keywords bliver også udledt fra disse eksempler, ikke direkte fra PDF-teksten.
 
 STYLE_EXAMPLES = {
     "A": [
